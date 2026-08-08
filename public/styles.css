@@ -352,6 +352,13 @@ textarea { resize: vertical; min-height: 90px; line-height: 1.55; }
 #authLicenseResult .err { color: #dc2626; }
 #copyRegKeyBtn { padding: 2px 10px; font-size: 12px; border: 1px solid #dce3e9; border-radius: 6px; background: #fff; cursor: pointer; margin-left: 4px; }
 #copyRegKeyBtn:hover { background: #f0f4f9; }
+/* 首次使用引导横幅 */
+.onboard-banner { background: linear-gradient(135deg, #1f3a5f, #274a77); color: #fff; border-radius: 12px; padding: 16px 20px; margin-bottom: 18px; display: flex; flex-wrap: wrap; align-items: center; gap: 14px; box-shadow: 0 4px 16px rgba(31,58,95,.18); }
+.ob-title { font-size: 16px; font-weight: 700; }
+.ob-steps { display: flex; gap: 10px; flex-wrap: wrap; }
+.ob-step { background: rgba(255,255,255,.15); border-radius: 8px; padding: 8px 14px; font-size: 13px; cursor: pointer; transition: background .15s; }
+.ob-step:hover { background: rgba(255,255,255,.3); }
+#obDismissBtn { margin-left: auto; background: #fff; color: #1f3a5f; }
 .lic-machine { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #475569; }
 .lic-machine span { white-space: nowrap; }
 .lic-machine code { font-family: Consolas, monospace; font-size: 12px; background: #f1f5f9; padding: 3px 8px; border-radius: 4px; word-break: break-all; flex: 1; }

@@ -55,6 +55,7 @@ const defaultState = () => ({
   customEmails: {},
   _owner: "", // 数据归属用户名：防跨账号串数据，并用于「本地 vs 服务器谁新」判定
   updatedAt: 0, // 最后保存时间戳
+  onboarded: false, // 首次使用引导是否已关闭
   checklist: { sea: [], air: [], express: [] }
 });
 
@@ -531,7 +532,17 @@ function updateClocks() {
   if (side) side.textContent = `本地 ${timeInTz(state.settings.baseCity || "Asia/Shanghai")}`;
 }
 
+function dismissOnboarding() {
+  state.onboarded = true;
+  saveState();
+  renderDashboard();
+  toast("已了解，祝业务顺利！");
+}
+
 function renderDashboard() {
+  // 首次使用引导横幅：未关闭时显示
+  const ob = $("#dashOnboard");
+  if (ob) ob.style.display = state.onboarded ? "none" : "";
   const now = new Date();
   const soon = dateISO(new Date(now.getTime() + 7 * 86400000));
   const activeClients = state.clients.filter((c) => ["已联系", "报价中", "跟进中", "新报价"].includes(c.status));
@@ -4411,6 +4422,7 @@ function init() {
 
   $("#menuBtn").addEventListener("click", openSidebar);
   $("#overlay").addEventListener("click", closeSidebar);
+  $("#obDismissBtn")?.addEventListener("click", dismissOnboarding);
   $$(".nav-item").forEach((btn) => btn.addEventListener("click", () => go(btn.dataset.section)));
   $("#quickQuoteBtn").addEventListener("click", () => go("quote"));
 
