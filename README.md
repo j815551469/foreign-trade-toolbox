@@ -59,9 +59,11 @@ node server.js
 
 浏览器打开 `http://localhost:8080`：
 
-1. 点「注册新账号」，邀请码默认 `trade123`；
+1. 点「注册新账号」，邀请码：**首次启动自动生成的随机码**（见服务器控制台或 `data/register-key.txt`，也可用 `REGISTER_KEY` 环境变量指定）；
 2. **第一个注册的账号自动成为管理员**；
 3. 登录后即可使用，数据自动保存。
+
+> v1.1 起注册邀请码不再使用默认值 `trade123`（防止新装即被接管），密码要求 **≥ 8 位**。
 
 > 也可以直接双击 `public/index.html` 以**本机模式**打开（不登录，数据仅存本机浏览器）。
 
@@ -96,15 +98,27 @@ node server.js
 
 - **前端**：原生 JavaScript + HTML/CSS，无框架、无构建步骤
 - **服务器**：Node.js 内置模块（`http / fs / path / crypto`），**零 npm 依赖**
-- **PDF**：jsPDF 生成 + pdf.js 预览
-- **安全**：PBKDF2 加盐哈希存密码、HMAC 签名登录令牌（7 天）、按用户数据隔离
+- **PDF**：jsPDF 生成 + pdf.js 预览；模板输出经 DOMPurify 消毒（防存储型 XSS）
+- **安全**：PBKDF2-SHA256（60 万次迭代，旧哈希自动迁移）加盐哈希、HMAC 签名令牌（7 天、含密码版本号可即时撤销）、登录/注册/管理接口限流、CSP + 安全响应头、状态文件原子写 + 备份轮转、可选 HTTPS
+- **授权**：ECDSA-P256 签名授权码（公司/席位/到期/机器绑定）+ 首次运行 14 天试用，详见 [docs/COMMERCIALIZATION.md](docs/COMMERCIALIZATION.md)
 
 ## 🔒 数据与安全
 
-- 用户数据独立保存在 `data/<用户名>.json`；账号存 `users.json`；
-- 密码为 **PBKDF2 加盐哈希**，不存明文；登录令牌 HMAC 签名 7 天有效；
-- `data/`、`users.json`、`.secret` 均在 `.gitignore` 中，**不会上传到仓库**；
-- 建议部署后通过环境变量修改注册邀请码 `REGISTER_KEY`，并尽快修改默认管理员密码。
+- 用户数据独立保存在 `data/<用户名>.json`（写入采用**临时文件+重命名**原子写，并保留最近 3 份 `.bak` 轮转备份）；账号存 `users.json`；
+- 密码为 **PBKDF2-SHA256（60 万次迭代 + 16 字节盐）** 加盐哈希，不存明文，恒定时间比较；旧版低迭代哈希会在登录成功后自动重哈希迁移；
+- 登录令牌 HMAC 签名、7 天有效，**携带密码版本号**：修改密码、重置密码、登出都会使旧令牌立即失效；
+- 登录/注册/管理接口带**按 IP 限流**（环境变量 `RATE_LOGIN` / `RATE_REGISTER` / `RATE_ADMIN` 可调）；
+- 所有响应带 **CSP**、`X-Content-Type-Options: nosniff`、`Referrer-Policy`、`X-Frame-Options` 安全头；
+- 数据文件损坏时读取返回空状态，不会把坏文件当权威副本；
+- `data/`、`users.json`、`.secret`、`tools/private.pem` 均在 `.gitignore` 中，**不会上传到仓库**；
+- 部署后请通过环境变量设置自定义注册邀请码 `REGISTER_KEY`，尽快修改管理员密码；启用 HTTPS 请提供 `SSL_CERT` / `SSL_KEY`（或根目录 `cert.pem` / `key.pem`，自签即可）。
+
+### 🎫 授权与试用
+
+- 首次运行自动进入 **14 天全功能试用**（默认 3 席位，环境变量 `TRIAL_DAYS` / `TRIAL_SEATS` 可调）；
+- 试用到期后需激活授权：**授权码由 ECDSA-P256 私钥离线签发**（`tools/make-license.js`），绑定机器码、可含席位与到期日；服务器只内置公钥校验，私钥不随产品分发；
+- 激活入口：设置页 → 授权与试用（仅管理员）；到期后管理员仍可登录激活，普通用户被拦截；
+- 签发流程与商用路线见 [docs/COMMERCIALIZATION.md](docs/COMMERCIALIZATION.md)。
 
 ## 🔄 更新
 

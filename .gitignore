@@ -4,6 +4,12 @@ data/
 users.json
 .secret
 
+# 授权签发私钥（绝不上传）
+tools/private.pem
+
+# Serena 项目文件
+.serena/
+
 # 打包产物
 *.zip
 

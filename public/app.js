@@ -3,6 +3,8 @@
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const esc = (value = "") => String(value).replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+// 存储型 XSS 消毒（单证模板等用户可编辑 HTML）：用 DOMPurify 清理脚本/事件/危险 URL
+const sanitizeHtml = (html) => (window.DOMPurify ? window.DOMPurify.sanitize(String(html == null ? "" : html)) : String(html == null ? "" : html));
 const uid = () => "id" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const fmt = (value, digits = 2) => {
   const n = Number(value);
@@ -19,7 +21,7 @@ const todayISO = () => dateISO(new Date());
 const pad = (n) => String(n).padStart(2, "0");
 
 // 系统版本号：升级时改这里，登录页/设置页会显示；增量升级包按此命名
-const APP_VERSION = "v1.0";
+const APP_VERSION = "v1.1";
 
 // 单证模板主色（buildDefaultDocTemplates 与各 tpl* 帮助函数共用）
 const TPL_C = "#1f3a5f";
@@ -49,6 +51,8 @@ const defaultState = () => ({
   docTplVersion: DOC_TPL_VERSION,
   lastQuoteCalc: null,
   customEmails: {},
+  _owner: "", // 数据归属用户名：防跨账号串数据，并用于「本地 vs 服务器谁新」判定
+  updatedAt: 0, // 最后保存时间戳
   checklist: { sea: [], air: [], express: [] }
 });
 
@@ -66,7 +70,32 @@ function normalizeDocBuilder(base, raw) {
 }
 
 function normalizeProducts(list) {
-  return (list || []).map((p) => ({ nameEn: "", priceTiers: Array.isArray(p.priceTiers) ? p.priceTiers : [], ...p }));
+  // 数字字段强制转 Number（根因：导入/加载的字符串值会进入 innerHTML 属性与文本上下文 → XSS 注入面）
+  return (list || []).map((p) => {
+    const b = { ...p, nameEn: p.nameEn || "" };
+    b.priceTiers = Array.isArray(p.priceTiers) ? p.priceTiers.map((t) => ({ ...t, qty: Number(t.qty) || 0, price: Number(t.price) || 0 })) : [];
+    b.cartonL = Number(p.cartonL) || 0;
+    b.cartonW = Number(p.cartonW) || 0;
+    b.cartonH = Number(p.cartonH) || 0;
+    b.cartonWeight = Number(p.cartonWeight) || 0;
+    b.qtyPerCarton = Number(p.qtyPerCarton) || 0;
+    b.unitCost = Number(p.unitCost) || 0;
+    b.moq = Number(p.moq) || 0;
+    return b;
+  });
+}
+function normalizeLogistics(list) {
+  return (list || []).map((it) => ({
+    ...it,
+    len: Number(it.len) || 0,
+    width: Number(it.width) || 0,
+    height: Number(it.height) || 0,
+    weight: Number(it.weight) || 0,
+    qty: Number(it.qty) || 0,
+  }));
+}
+function normalizeContainers(list) {
+  return (list || []).map((c) => ({ ...c, volume: Number(c.volume) || 0, usable: Number(c.usable) || 0, payload: Number(c.payload) || 0 }));
 }
 
 function normalizeClients(list) {
@@ -96,9 +125,9 @@ function normalizeState(raw) {
     orders: normalizeOrders(Array.isArray(s.orders) ? s.orders : base.orders),
     colorDict: Array.isArray(s.colorDict) && s.colorDict.length ? s.colorDict : base.colorDict,
     hsCodes: ensureHsIds(Array.isArray(s.hsCodes) ? s.hsCodes : base.hsCodes),
-    logisticsItems: Array.isArray(s.logisticsItems) ? s.logisticsItems : base.logisticsItems,
+    logisticsItems: normalizeLogistics(Array.isArray(s.logisticsItems) ? s.logisticsItems : base.logisticsItems),
     logisticsRates: Array.isArray(s.logisticsRates) && s.logisticsRates.length ? s.logisticsRates : base.logisticsRates,
-    containers: Array.isArray(s.containers) && s.containers.length ? s.containers : base.containers,
+    containers: normalizeContainers(Array.isArray(s.containers) && s.containers.length ? s.containers : base.containers),
     customEmails: s.customEmails && typeof s.customEmails === "object" && !Array.isArray(s.customEmails) ? s.customEmails : {},
     rates: { ...defaultRates(), ...(s.rates && typeof s.rates === "object" ? s.rates : {}) },
     settings: { ...base.settings, ...(s.settings && typeof s.settings === "object" ? s.settings : {}) },
@@ -133,24 +162,70 @@ function saveAuth() {
 }
 
 function saveState() {
-  try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (err) { /* storage unavailable */ }
+  if (auth.username) state._owner = auth.username;
+  state.updatedAt = Date.now();
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify(state));
+  } catch (err) {
+    // localStorage 满（约 5MB）会静默失败 → 提示一次，避免用户误以为已保存
+    if (!storageWarned) {
+      storageWarned = true;
+      toast("本机存储空间已满，数据可能未完整保存，请清理数据或改用服务器保存", 5000);
+    }
+  }
   if (auth.token) scheduleServerSave();
 }
 
 let serverSaveTimer = null;
+let sessionEpoch = 0; // 会话代际：登出/切换账号时 +1，使排队的过期保存定时器作废（防止 A 的数据被写进 B 的账号）
+let saveFailNotified = false;
+let storageWarned = false;
+
 function scheduleServerSave() {
   clearTimeout(serverSaveTimer);
   serverSaveTimer = setTimeout(pushUserState, 600);
 }
 
+function notifySaveFail() {
+  if (saveFailNotified) return;
+  saveFailNotified = true;
+  toast("保存失败：无法连接服务器，当前改动可能未同步，请检查网络", 4000);
+}
+
 async function pushUserState() {
+  // 捕获调度时的会话与账号；期间若登出/切换账号，本次推送作废
+  const epoch = sessionEpoch;
+  const uname = auth.username;
+  const tok = auth.token;
+  if (!tok) return;
   try {
-    await fetch("api/state", {
+    const r = await fetch("api/state", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + auth.token },
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + tok },
       body: JSON.stringify(state)
     });
-  } catch (err) { /* 未通过服务器访问时忽略 */ }
+    if (epoch !== sessionEpoch || uname !== auth.username || tok !== auth.token) return; // 会话已切换，丢弃
+    if (r.ok) { saveFailNotified = false; } else notifySaveFail();
+  } catch (err) {
+    if (epoch === sessionEpoch && uname === auth.username) notifySaveFail();
+  }
+}
+
+// 立即清空排队并推送一次（用于 resetData/importData 等破坏性操作：推送失败可回滚）
+async function flushState() {
+  clearTimeout(serverSaveTimer);
+  serverSaveTimer = null;
+  if (!auth.token) return true;
+  const epoch = sessionEpoch, uname = auth.username, tok = auth.token;
+  try {
+    const r = await fetch("api/state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + tok },
+      body: JSON.stringify(state)
+    });
+    if (epoch !== sessionEpoch || uname !== auth.username) return false;
+    return r.ok;
+  } catch (e) { return false; }
 }
 
 async function initAuth() {
@@ -190,9 +265,24 @@ function showAuthLogin() {
   $("#authRegisterForm").style.display = "none";
   $("#authScreen").classList.add("auth-visible");
   setTimeout(() => $("#authUsername")?.focus(), 50);
+  updateAuthLicenseHint();
+}
+
+// 登录页显示试用剩余/到期提示
+async function updateAuthLicenseHint() {
+  const el = $("#authLicenseHint");
+  if (!el) return;
+  try {
+    const r = await fetch("api/license", { cache: "no-store" });
+    const d = await r.json();
+    if (d.mode === "trial") el.textContent = `试用剩余 ${Number(d.daysLeft) || 0} 天 · 可注册 ${Number(d.seats) || "-"} 个账号`;
+    else if (d.mode === "expired") el.textContent = "试用已到期，请联系授权方获取授权码（管理员登录后可在设置页激活）";
+    else el.textContent = "";
+  } catch (e) { el.textContent = ""; }
 }
 
 async function doLogin() {
+  clearTimeout(serverSaveTimer); serverSaveTimer = null;
   const u = $("#authUsername").value.trim();
   const p = $("#authPassword").value;
   const err = $("#authError");
@@ -201,6 +291,8 @@ async function doLogin() {
     const r = await fetch("api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: u, password: p }) });
     const data = await r.json();
     if (!r.ok) { err.textContent = data.error || "登录失败"; return; }
+    sessionEpoch++;
+    saveFailNotified = false;
     auth = { token: data.token, username: data.username, role: data.role || "" };
     saveAuth();
     err.textContent = "";
@@ -228,18 +320,45 @@ async function doRegister() {
 }
 
 async function loadUserState() {
+  clearTimeout(serverSaveTimer); serverSaveTimer = null;
   try {
     const r = await fetch("api/state", { headers: { Authorization: "Bearer " + auth.token }, cache: "no-store" });
     if (r.ok) {
       const data = await r.json();
-      // 新用户服务器数据为空 → 用默认（演示）数据；始终覆盖内存，避免残留上一个用户的会话
-      state = normalizeState(data && typeof data === "object" ? data : {});
-      saveState();
+      if (data && typeof data === "object") {
+        // 同用户本地数据比服务器新（离线编辑/未 flush 的改动）→ 本地优先并上传，避免被服务器旧快照覆盖
+        let local = null;
+        try {
+          const ls = JSON.parse(localStorage.getItem(STORE_KEY) || "null");
+          if (ls && typeof ls === "object" && !Array.isArray(ls)) local = ls;
+        } catch (e) { /* ignore */ }
+        if (local && local._owner === auth.username && Number(local.updatedAt || 0) > Number(data.updatedAt || 0)) {
+          state = normalizeState(local);
+          saveState();
+          return;
+        }
+        state = normalizeState(data);
+        saveState();
+        return;
+      }
     }
-  } catch (err) { /* 本地模式 */ }
+    // 加载失败/损坏：清空内存并只写本地存储，绝不在错误的账号下把上个用户数据推送上去
+    state = normalizeState(null);
+    clearTimeout(serverSaveTimer); serverSaveTimer = null;
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) { /* ignore */ }
+  } catch (err) { /* 本地模式（file://） */ }
 }
 
-function logout() {
+async function logout() {
+  const tok = auth.token;
+  if (tok) {
+    clearTimeout(serverSaveTimer); serverSaveTimer = null;
+    // 先把最后一次改动写回服务器，再注销（best-effort，失败不阻断）
+    try { await fetch("api/state", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + tok }, body: JSON.stringify(state) }); } catch (e) { /* ignore */ }
+    try { await fetch("api/logout", { method: "POST", headers: { Authorization: "Bearer " + tok } }); } catch (e) { /* ignore */ }
+  }
+  sessionEpoch++;
+  saveFailNotified = false;
   auth = { token: "", username: "" };
   saveAuth();
   $("#authLoading").style.display = "none";
@@ -693,11 +812,11 @@ function renderLogisticsItems() {
   $("#logisticsItemsTable tbody").innerHTML = items.length ? items.map((it, idx) => `
     <tr class="logistics-item-row" data-idx="${idx}">
       <td><input class="lg-name" value="${esc(it.name || `货物${idx + 1}`)}"></td>
-      <td><input type="number" class="lg-len" value="${it.len ?? 0}" step="0.1"></td>
-      <td><input type="number" class="lg-width" value="${it.width ?? 0}" step="0.1"></td>
-      <td><input type="number" class="lg-height" value="${it.height ?? 0}" step="0.1"></td>
-      <td><input type="number" class="lg-weight" value="${it.weight ?? 0}" step="0.1"></td>
-      <td><input type="number" class="lg-qty" value="${it.qty ?? 0}" step="1"></td>
+      <td><input type="number" class="lg-len" value="${esc(it.len ?? 0)}" step="0.1"></td>
+      <td><input type="number" class="lg-width" value="${esc(it.width ?? 0)}" step="0.1"></td>
+      <td><input type="number" class="lg-height" value="${esc(it.height ?? 0)}" step="0.1"></td>
+      <td><input type="number" class="lg-weight" value="${esc(it.weight ?? 0)}" step="0.1"></td>
+      <td><input type="number" class="lg-qty" value="${esc(it.qty ?? 0)}" step="1"></td>
       <td class="lg-subtotal">${fmt((it.len * it.width * it.height) / 1000000 * (it.qty || 0), 3)}</td>
       <td><div class="actions"><button class="icon-btn js-del-logistics-item" data-idx="${idx}" title="删除"><i data-lucide="trash-2"></i></button></div></td>
     </tr>`).join("") : `<tr><td colspan="8" class="empty-state">暂无货物，点击“新增货物”添加</td></tr>`;
@@ -731,7 +850,7 @@ function addLogisticsItem() {
 function renderLogistics() {
   renderLogisticsItems();
   const containerRows = state.containers.map((c) => `
-    <tr><td><strong>${esc(c.code)}</strong></td><td>${esc(c.inner)}</td><td>${fmt(c.volume)} m³</td><td>${fmt(c.usable)} m³</td><td>${c.payload} t</td><td>${esc(c.note)}</td></tr>`).join("");
+    <tr><td><strong>${esc(c.code)}</strong></td><td>${esc(c.inner)}</td><td>${fmt(c.volume)} m³</td><td>${fmt(c.usable)} m³</td><td>${esc(c.payload ?? 0)} t</td><td>${esc(c.note)}</td></tr>`).join("");
   $("#containerTable").innerHTML = `<table class="data-table"><thead><tr><th>柜型</th><th>内尺寸</th><th>理论容积</th><th>可用容积</th><th>最大载重</th><th>说明</th></tr></thead><tbody>${containerRows}</tbody></table>`;
   const routeSel = $("#frRoute");
   const currentRoute = routeSel.value;
@@ -995,7 +1114,7 @@ function renderCurrency() {
     TRADE_DATA.currencies.map((c) => {
       const rate = state.rates[c.code] ?? c.rate;
       const inverse = rate ? 1 / rate : 0;
-      return `<tr><td>${esc(c.name)}</td><td><strong>${c.code}</strong></td><td><input type="number" step="0.0001" data-rate="${c.code}" value="${rate}"></td><td>${fmt(inverse, 6)}</td></tr>`;
+      return `<tr><td>${esc(c.name)}</td><td><strong>${c.code}</strong></td><td><input type="number" step="0.0001" data-rate="${c.code}" value="${esc(rate ?? "")}"></td><td>${fmt(inverse, 6)}</td></tr>`;
     }).join("")
   }</tbody></table>`;
   const updEl = $("#rateUpdatedHint");
@@ -2453,7 +2572,8 @@ function printDoc() {
   const html = renderDocTemplate(type, data);
   const win = window.open("", "_blank", "width=900,height=1200");
   if (!win) { toast("浏览器拦截了弹窗，请允许后重试"); return; }
-  win.document.write(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>${esc(DOC_GENERATORS[type].name)}</title><style>@page { size: A4; margin: 0; } html, body { margin: 0; padding: 0; } .doc-tpl { height: auto !important; min-height: 1123px; }</style></head><body>${html}</body></html>`);
+  // 只消毒模板内容，保留静态的 <head>/<style>@page A4</style>（否则打印会被裁成非 A4）
+  win.document.write(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>${esc(DOC_GENERATORS[type].name)}</title><style>@page { size: A4; margin: 0; } html, body { margin: 0; padding: 0; } .doc-tpl { height: auto !important; min-height: 1123px; }</style></head><body>${sanitizeHtml(html)}</body></html>`);
   win.document.close();
   win.focus();
   setTimeout(() => { try { win.print(); } catch (err) { /* ignore */ } }, 350);
@@ -2783,7 +2903,8 @@ function fmtDateEn(dateStr) {
 }
 
 function renderDocTemplate(type, data) {
-  return renderTemplateHtml(docTemplateHtml(type), data);
+  // 模板来自可编辑/可导入的 docTemplates → 输出前统一 DOMPurify 消毒，阻断存储型 XSS
+  return sanitizeHtml(renderTemplateHtml(docTemplateHtml(type), data));
 }
 
 async function captureTemplatePage(type, data) {
@@ -2900,7 +3021,7 @@ async function renderPdfPreview(doc, htmlFallback) {
     }
   } catch (err) {
     if (htmlFallback) {
-      wrap.innerHTML = `<div class="pdf-html-fallback"><div class="hint" style="margin-bottom:8px;">PDF 预览不可用（file:// 或浏览器限制时常见），下方为文档版式预览，可点“下载 PDF”获取正式文件。</div>${htmlFallback}</div>`;
+      wrap.innerHTML = `<div class="pdf-html-fallback"><div class="hint" style="margin-bottom:8px;">PDF 预览不可用（file:// 或浏览器限制时常见），下方为文档版式预览，可点“下载 PDF”获取正式文件。</div>${sanitizeHtml(htmlFallback)}</div>`;
     } else {
       wrap.innerHTML = `<div class="empty-state">PDF 预览渲染失败，可直接下载查看。</div>`;
     }
@@ -3064,6 +3185,48 @@ function renderSettings() {
     umPanel.style.display = auth.role === "admin" ? "" : "none";
     if (auth.role === "admin") renderUserManagement();
   }
+  renderLicenseStatus();
+}
+
+// —— 授权 / 试用 ——
+async function renderLicenseStatus() {
+  const statusEl = $("#licenseStatus");
+  if (!statusEl) return;
+  try {
+    const r = await fetch("api/license", { cache: "no-store" });
+    const d = await r.json();
+    if (!r.ok) { statusEl.innerHTML = `<span class="cell-sub">无法获取授权状态：${esc(d.error || "未知错误")}</span>`; return; }
+    const mcEl = $("#licenseMachine");
+    if (mcEl) mcEl.innerHTML = `机器码：<code>${esc(d.machine || "-")}</code>`;
+    if (d.mode === "licensed") {
+      statusEl.innerHTML = `<span><i data-lucide="badge-check"></i> 已激活授权 · <strong>${esc(d.company || "")}</strong> · ${Number(d.seats) || "-"} 席位${d.expires ? " · 到期 " + esc(String(d.expires).slice(0, 10)) : " · 永久"}</span>`;
+    } else if (d.mode === "trial") {
+      statusEl.innerHTML = `<span><i data-lucide="hourglass"></i> 试用期剩余 <strong>${Number(d.daysLeft) || 0} 天</strong>（${Number(d.seats) || "-"} 席位）</span>`;
+    } else {
+      statusEl.innerHTML = `<span><i data-lucide="alert-triangle"></i> 试用已到期，请联系授权方获取授权码激活（需管理员登录）</span>`;
+    }
+    const row = $("#licenseActivateRow");
+    if (row) row.style.display = auth.role === "admin" ? "" : "none";
+    refreshIcons();
+  } catch (e) {
+    statusEl.innerHTML = `<span class="cell-sub">未通过服务器访问（本机模式，无授权限制）</span>`;
+  }
+}
+async function activateLicense() {
+  const key = ($("#licenseKeyInput").value || "").trim();
+  if (!key) { toast("请先粘贴授权码"); return; }
+  try {
+    const r = await fetch("api/license", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + auth.token },
+      body: JSON.stringify({ key })
+    });
+    const d = await r.json();
+    if (!r.ok) { toast(d.error || "激活失败"); return; }
+    toast("授权激活成功");
+    await renderLicenseStatus();
+    if (typeof renderUserManagement === "function") renderUserManagement();
+  } catch (e) { toast("无法连接服务器"); }
 }
 
 // —— 用户管理（管理员） ——
@@ -3094,9 +3257,9 @@ async function renderUserManagement() {
 }
 
 async function resetUserPassword(username) {
-  const pw = prompt(`为「${username}」设置新密码（至少 4 位）：`);
+  const pw = prompt(`为「${username}」设置新密码（至少 8 位）：`);
   if (pw === null || !pw.trim()) return;
-  if (pw.trim().length < 4) { toast("密码至少 4 位"); return; }
+  if (pw.trim().length < 8) { toast("密码至少 8 位"); return; }
   try {
     const r = await fetch("api/users/reset", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + auth.token }, body: JSON.stringify({ username, password: pw.trim() }) });
     const d = await r.json();
@@ -3279,7 +3442,7 @@ function renderProducts() {
       const tiers = (p.priceTiers || []).filter((t) => t.qty > 0 && t.price > 0).sort((a, b) => a.qty - b.qty);
       return `<tr><td><div class="cell-main">${esc(p.model)} ${esc(p.name)}</div><div class="cell-sub">${p.nameEn ? esc(p.nameEn) + " · " : ""}${esc(p.notes || "")}</div></td>
       <td>${esc(p.category)}</td><td>${esc(p.hsCode)}</td><td><strong>¥${fmt(p.unitCost)}</strong>${tiers.length ? `<div class="cell-sub">${esc(tiers.map((t) => `${fmtInt(t.qty)}+:¥${t.price}`).join(" "))}</div>` : ""}</td><td>${fmtInt(p.moq)}</td>
-      <td><div class="cell-sub">${p.cartonL}×${p.cartonW}×${p.cartonH} cm</div><div class="cell-sub">${p.cartonWeight} kg / ${p.qtyPerCarton} pcs</div></td>
+      <td><div class="cell-sub">${esc(p.cartonL ?? 0)}×${esc(p.cartonW ?? 0)}×${esc(p.cartonH ?? 0)} cm</div><div class="cell-sub">${esc(p.cartonWeight ?? 0)} kg / ${esc(p.qtyPerCarton ?? 0)} pcs</div></td>
       <td>${esc(p.supplier)}</td>
       <td><div class="actions"><button class="icon-btn js-load-product" data-id="${p.id}" title="带入报价"><i data-lucide="calculator"></i></button><button class="icon-btn js-edit-product" data-id="${p.id}" title="编辑"><i data-lucide="pencil"></i></button><button class="icon-btn js-del-product" data-id="${p.id}" title="删除"><i data-lucide="trash-2"></i></button></div></td></tr>`;
     }).join("") : `<tr><td colspan="8" class="empty-state">暂无产品资料</td></tr>`
@@ -3297,13 +3460,13 @@ function productModal(id) {
       <label>英文名<input id="pNameEn" value="${esc(p.nameEn || "")}" placeholder="LED Light Strip 5m"></label>
       <label>类别<input id="pCategory" value="${esc(p.category || "")}"></label>
       <label>HS 编码<input id="pHsCode" value="${esc(p.hsCode || "")}"></label>
-      <label>单位成本（RMB）<input id="pUnitCost" type="number" value="${p.unitCost ?? ""}" step="0.01"></label>
-      <label>MOQ<input id="pMoq" type="number" value="${p.moq ?? ""}"></label>
-      <label>外箱长（cm）<input id="pCartonL" type="number" value="${p.cartonL ?? ""}"></label>
-      <label>外箱宽（cm）<input id="pCartonW" type="number" value="${p.cartonW ?? ""}"></label>
-      <label>外箱高（cm）<input id="pCartonH" type="number" value="${p.cartonH ?? ""}"></label>
-      <label>每箱毛重（kg）<input id="pCartonWeight" type="number" value="${p.cartonWeight ?? ""}"></label>
-      <label>每箱数量<input id="pQtyPerCarton" type="number" value="${p.qtyPerCarton ?? ""}"></label>
+      <label>单位成本（RMB）<input id="pUnitCost" type="number" value="${esc(p.unitCost ?? "")}" step="0.01"></label>
+      <label>MOQ<input id="pMoq" type="number" value="${esc(p.moq ?? "")}"></label>
+      <label>外箱长（cm）<input id="pCartonL" type="number" value="${esc(p.cartonL ?? "")}"></label>
+      <label>外箱宽（cm）<input id="pCartonW" type="number" value="${esc(p.cartonW ?? "")}"></label>
+      <label>外箱高（cm）<input id="pCartonH" type="number" value="${esc(p.cartonH ?? "")}"></label>
+      <label>每箱毛重（kg）<input id="pCartonWeight" type="number" value="${esc(p.cartonWeight ?? "")}"></label>
+      <label>每箱数量<input id="pQtyPerCarton" type="number" value="${esc(p.qtyPerCarton ?? "")}"></label>
       <label>供应商<input id="pSupplier" value="${esc(p.supplier || "")}"></label>
     </div>
     <div class="color-field">
@@ -3327,7 +3490,7 @@ function productModal(id) {
 function renderPriceTiers(tiers) {
   const list = (tiers && tiers.length) ? tiers : [{ qty: "", price: "" }];
   $("#priceTierList").innerHTML = list.map((t, i) => `
-    <div class="tier-row"><span>数量 ≥</span><input type="number" class="pt-qty" value="${t.qty ?? ""}" placeholder="1000" style="width:90px"><span>成本 ¥</span><input type="number" class="pt-price" step="0.01" value="${t.price ?? ""}" placeholder="12" style="width:90px"><button type="button" class="icon-btn js-del-tier" title="删除"><i data-lucide="trash-2"></i></button></div>`).join("");
+    <div class="tier-row"><span>数量 ≥</span><input type="number" class="pt-qty" value="${esc(t.qty ?? "")}" placeholder="1000" style="width:90px"><span>成本 ¥</span><input type="number" class="pt-price" step="0.01" value="${esc(t.price ?? "")}" placeholder="12" style="width:90px"><button type="button" class="icon-btn js-del-tier" title="删除"><i data-lucide="trash-2"></i></button></div>`).join("");
   refreshIcons();
 }
 
@@ -3949,13 +4112,22 @@ function exportData() {
   downloadFile("trade-toolbox-data.json", JSON.stringify(state, null, 2), "application/json");
 }
 
-function importData(file) {
+async function importData(file) {
   const reader = new FileReader();
-  reader.onload = () => {
+  reader.onload = async () => {
     try {
       const data = JSON.parse(reader.result);
+      const prev = JSON.stringify(state);
       state = normalizeState(data);
-      saveState();
+      const ok = await flushState();
+      if (!ok && auth.token) {
+        // 推送失败 → 回滚，避免破坏服务器副本
+        try { state = normalizeState(JSON.parse(prev)); } catch (e) { state = normalizeState(null); }
+        saveState();
+        toast("导入失败：无法连接服务器，已保留原数据");
+        return;
+      }
+      try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) { /* ignore */ }
       go("dashboard");
       toast("数据已导入");
     } catch (err) {
@@ -3965,10 +4137,19 @@ function importData(file) {
   reader.readAsText(file);
 }
 
-function resetData() {
+async function resetData() {
   if (!confirm("确定清空当前数据并恢复演示数据吗？")) return;
+  const prev = JSON.stringify(state);
   state = normalizeState(null);
-  saveState();
+  const ok = await flushState();
+  if (!ok && auth.token) {
+    // 推送失败 → 回滚，避免服务器副本被破坏性操作清空后丢失
+    try { state = normalizeState(JSON.parse(prev)); } catch (e) { state = normalizeState(null); }
+    saveState();
+    toast("重置失败：无法连接服务器，已保留原数据");
+    return;
+  }
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) { /* ignore */ }
   go("dashboard");
   toast("已恢复演示数据");
 }
@@ -4426,6 +4607,8 @@ function init() {
     const delBtn = e.target.closest(".js-user-del");
     if (delBtn) { deleteUser(delBtn.dataset.user); return; }
   });
+  // 授权/试用
+  $("#activateLicenseBtn")?.addEventListener("click", activateLicense);
 
   // 登录/注册
   $("#authLoginBtn").addEventListener("click", doLogin);
@@ -4473,6 +4656,20 @@ function init() {
     updateClocks();
     if ($("#section-dashboard").classList.contains("active")) renderDashboard();
   }, 20000);
+  // 关页/刷新前尽量把排队中的改动写回服务器（keepalive 有大小限制，best-effort）
+  window.addEventListener("pagehide", () => {
+    if (!auth.token || !serverSaveTimer) return;
+    clearTimeout(serverSaveTimer);
+    serverSaveTimer = null;
+    try {
+      fetch("api/state", {
+        method: "POST",
+        keepalive: true,
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + auth.token },
+        body: JSON.stringify(state)
+      }).catch(() => { /* ignore */ });
+    } catch (e) { /* ignore */ }
+  });
 }
 
 document.addEventListener("DOMContentLoaded", init);

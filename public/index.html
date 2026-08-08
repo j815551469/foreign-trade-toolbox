@@ -588,6 +588,16 @@
               <div id="userManageList" class="user-manage-list"></div>
               <div class="hint">首个注册用户自动为管理员。管理员可重置密码、删除用户、设置/取消管理员（不能删除或降级最后一名管理员、不能降级自己）。</div>
             </div>
+            <div class="panel" id="licensePanel">
+              <div class="panel-head"><h3>授权与试用</h3></div>
+              <div id="licenseStatus" class="account-info">加载中…</div>
+              <div class="data-actions" id="licenseActivateRow" style="display:none;">
+                <input id="licenseKeyInput" placeholder="粘贴授权码" style="flex:1;min-width:0">
+                <button class="btn" id="activateLicenseBtn"><i data-lucide="key-round"></i><span>激活</span></button>
+              </div>
+              <div class="hint" id="licenseMachine">机器码：<code>-</code></div>
+              <div class="hint">试用到期后需激活授权才能继续使用；正式授权按授权码席位限制注册人数。首次运行自动生成随机注册邀请码，见服务器控制台或 data/register-key.txt。</div>
+            </div>
           </div>
         </section>
       </div>
@@ -598,6 +608,7 @@
     <div class="auth-card">
       <div class="auth-brand"><strong>外贸业务员工具箱</strong><small>Trade Desk · 局域网多用户版 <span id="appVersion"></span></small></div>
       <div id="authLoading" class="auth-loading">正在连接服务器…</div>
+      <div id="authLicenseHint" class="auth-license-hint"></div>
       <div id="authLoginForm" class="auth-form" style="display:none">
         <input id="authUsername" placeholder="用户名" autocomplete="username">
         <input id="authPassword" type="password" placeholder="密码" autocomplete="current-password">
@@ -608,7 +619,7 @@
       <div id="authRegisterForm" class="auth-form" style="display:none">
         <input id="regUsername" placeholder="用户名（登录用）" autocomplete="username">
         <input id="regDisplayName" placeholder="姓名 / 业务员名称">
-        <input id="regPassword" type="password" placeholder="密码（至少 4 位）" autocomplete="new-password">
+        <input id="regPassword" type="password" placeholder="密码（至少 8 位）" autocomplete="new-password">
         <input id="regKey" type="password" placeholder="注册邀请码（问管理员要）" autocomplete="off">
         <button class="btn primary auth-btn" id="regBtn"><i data-lucide="user-plus"></i><span>注册</span></button>
         <div class="auth-switch"><span>已有账号？</span><button class="link-btn" id="authShowLogin">返回登录</button></div>
@@ -622,6 +633,7 @@
   <script src="vendor/jspdf.umd.min.js"></script>
   <script src="vendor/pdf.min.js"></script>
   <script src="vendor/html2canvas.min.js"></script>
+  <script src="vendor/purify.min.js"></script>
   <script src="hs-full.js"></script>
   <script src="data.js"></script>
   <script src="app.js"></script>
