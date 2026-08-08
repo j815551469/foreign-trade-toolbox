@@ -5,6 +5,16 @@ const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const esc = (value = "") => String(value).replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
 // 存储型 XSS 消毒（单证模板等用户可编辑 HTML）：用 DOMPurify 清理脚本/事件/危险 URL
 const sanitizeHtml = (html) => (window.DOMPurify ? window.DOMPurify.sanitize(String(html == null ? "" : html)) : String(html == null ? "" : html));
+// 解析产品英文名：优先 pid 精确匹配，其次名称/型号模糊匹配；找不到返回原名称
+function resolveProductEnglish(itemName, itemPid) {
+  let p = null;
+  if (itemPid) p = state.products.find((x) => x.id === itemPid);
+  if (!p && itemName) {
+    const n = String(itemName);
+    p = state.products.find((x) => n.includes(x.name) || n.includes(x.model) || (x.name && x.name.includes(n)) || (x.model && x.model.includes(n)));
+  }
+  return (p && (p.nameEn || p.model || p.name)) || String(itemName || "");
+}
 // 图片压缩：文件 → 等比缩放为 JPEG base64（控制入库体积）
 function resizeImage(file, maxDim, quality, cb) {
   const reader = new FileReader();
@@ -49,7 +59,7 @@ const TPL_C = "#1f3a5f";
 
 const STORE_KEY = "tradeToolboxV1";
 // 单证模板版本：版本升级时重建默认模板（丢弃旧版 localStorage 里的模板），保证用户拿到最新专业版
-const DOC_TPL_VERSION = 2;
+const DOC_TPL_VERSION = 3;
 const defaultRates = () => Object.fromEntries(TRADE_DATA.currencies.map((c) => [c.code, c.rate]));
 // 给内置演示数据打上 _demo 标记（管理员"清空初始演示数据"按此识别，只删演示、绝不删用户自建数据）
 const markDemo = (arr) => JSON.parse(JSON.stringify(arr || [])).map((x) => ({ ...x, _demo: true }));
@@ -1673,8 +1683,8 @@ function quotationPdf(q) {
   const sales = state.settings.sales || "";
   const date = q.date || todayISO();
   const items = Array.isArray(q.items) && q.items.length
-    ? q.items.map((it) => ({ desc: it.name || "-", hs: it.hs || "", qty: String(it.qty || ""), unitPrice: it.unitPrice || "", amount: orderItemAmount(it) }))
-    : [{ desc: q.product || "-", qty: String(q.qty || ""), unitPrice: q.unitPrice || "", amount: (Number(q.unitPrice) || 0) * (Number(q.qty) || 0) }];
+    ? q.items.map((it) => ({ desc: resolveProductEnglish(it.name, it.pid) || "-", hs: it.hs || "", qty: String(it.qty || ""), unitPrice: it.unitPrice || "", amount: orderItemAmount(it) }))
+    : [{ desc: resolveProductEnglish(q.product) || "-", qty: String(q.qty || ""), unitPrice: q.unitPrice || "", amount: (Number(q.unitPrice) || 0) * (Number(q.qty) || 0) }];
   const total = items.reduce((s, it) => s + (Number(it.amount) || 0), 0) || Number(q.amount) || 0;
   let y = pdfHeader(doc, "QUOTATION", `${q.ref || ""}  |  Date: ${date}`);
   y = pdfField(doc, y, "Client", q.clientName || "-");
@@ -2085,69 +2095,83 @@ function renderCountryDetail(name) {
 // {{company}}/{{sales}}/{{email}}/{{phone}}/{{contact}}/{{docX}}/{{docGoodsRows}}/{{docAmountWords}}
 function tplShell(body, opts = {}) {
   const size = opts.fontSize || 12;
-  return `<div class="doc-tpl" style="position:relative;width:794px;height:1123px;box-sizing:border-box;padding:42px 54px;background:#fff;font-family:'Helvetica Neue',Helvetica,Arial,'PingFang SC','Microsoft YaHei',sans-serif;color:#22303c;font-size:${size}px;">${body}</div>`;
+  return `<div class="doc-tpl" style="position:relative;width:794px;height:1123px;box-sizing:border-box;padding:40px 48px;background:#fff;font-family:'Helvetica Neue',Helvetica,Arial,'PingFang SC','Microsoft YaHei',sans-serif;color:#22303c;font-size:${size}px;"><div style="position:absolute;left:0;top:0;right:0;height:5px;background:${TPL_C};"></div>${body}</div>`;
 }
 
-// 公司信头：公司名 + 英文地址 + 联系方式
+// 公司信头：公司名 + 英文地址 + 联系方式（右对齐）+ 金色强调线
 function tplLetterhead() {
-  return `<div style="border-bottom:2.5px solid ${TPL_C};padding-bottom:10px;margin-bottom:11px;"><div style="font-size:24px;font-weight:800;color:${TPL_C};letter-spacing:0.5px;line-height:1.2;">{{company}}</div><div style="font-size:10.5px;color:#5a6b78;margin-top:4px;max-width:480px;">{{docSellerAddress}}</div><div style="font-size:9.5px;color:#8a98a5;margin-top:3px;">{{contact}}</div></div>`;
+  return `<div style="border-bottom:2.5px solid ${TPL_C};padding-bottom:11px;margin-bottom:12px;position:relative;">
+    <div style="font-size:25px;font-weight:800;color:${TPL_C};letter-spacing:0.5px;line-height:1.2;">{{company}}</div>
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:5px;">
+      <div style="font-size:10.5px;color:#5a6b78;line-height:1.6;">{{docSellerAddress}}</div>
+      <div style="font-size:9.5px;color:#8a98a5;text-align:right;">{{contact}}</div>
+    </div>
+    <div style="position:absolute;left:0;bottom:-2.5px;height:2.5px;width:72px;background:#c8a24a;"></div>
+  </div>`;
 }
 
-// 文档标题 + 右侧编号信息块（rows: [label, value][]）
+// 文档标题 + 右侧编号信息块（金色强调线 + 编号下划线）
 function tplTitle(title, subtitle, rows) {
-  return `<div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:10px;"><div><div style="font-size:21px;font-weight:800;color:${TPL_C};letter-spacing:2px;">${title}</div>${subtitle ? `<div style="font-size:10px;color:#8a98a5;margin-top:3px;">${subtitle}</div>` : ""}</div><table style="border-collapse:collapse;font-size:10.5px;">${(rows || []).map((r) => `<tr><td style="text-align:right;color:#8a98a5;padding:1.5px 8px 1.5px 0;">${r[0]}</td><td style="text-align:right;font-weight:700;color:#22303c;">${r[1]}</td></tr>`).join("")}</table></div>`;
+  return `<div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:12px;">
+    <div>
+      <div style="font-size:23px;font-weight:800;color:${TPL_C};letter-spacing:2px;line-height:1.1;">${title}</div>
+      <div style="width:46px;height:3px;background:#c8a24a;margin-top:6px;"></div>
+      ${subtitle ? `<div style="font-size:9.5px;color:#8a98a5;margin-top:6px;">${subtitle}</div>` : ""}
+    </div>
+    <table style="border-collapse:collapse;font-size:10px;">${(rows || []).map((r) => `<tr><td style="text-align:right;color:#8a98a5;padding:2px 8px 2px 0;">${r[0]}</td><td style="text-align:right;font-weight:700;color:#22303c;border-bottom:1px solid #eef2f7;">${r[1]}</td></tr>`).join("")}</table>
+  </div>`;
 }
 
-// 收发货人双栏
+// 收发货人双栏（左侧深蓝强调线）
 function tplParties(lLabel, lName, lAddr, rLabel, rName, rAddr) {
-  const cell = (label, name, addr) => `<td style="width:50%;vertical-align:top;padding:8px 10px;border:1px solid #dce3e9;background:#f6f9fb;"><div style="font-size:8.5px;font-weight:700;color:#8a98a5;letter-spacing:1.5px;margin-bottom:3px;">${label}</div><div style="font-size:11.5px;font-weight:700;color:#22303c;">${name}</div><div style="font-size:10px;color:#5a6b78;margin-top:2px;line-height:1.5;">${addr}</div></td>`;
-  return `<table style="width:100%;border-collapse:collapse;margin-bottom:12px;"><tr>${cell(lLabel, lName, lAddr)}<td style="width:10px;"></td>${cell(rLabel, rName, rAddr)}</tr></table>`;
+  const cell = (label, name, addr) => `<td style="width:50%;vertical-align:top;padding:9px 12px;border:1px solid #dce3e9;border-left:3px solid ${TPL_C};background:#f7f9fc;"><div style="font-size:8.5px;font-weight:700;color:#8a98a5;letter-spacing:1.5px;margin-bottom:4px;">${label}</div><div style="font-size:12px;font-weight:700;color:#22303c;">${name}</div><div style="font-size:10px;color:#5a6b78;margin-top:3px;line-height:1.55;">${addr}</div></td>`;
+  return `<table style="width:100%;border-collapse:collapse;margin-bottom:12px;"><tr>${cell(lLabel, lName, lAddr)}<td style="width:12px;"></td>${cell(rLabel, rName, rAddr)}</tr></table>`;
 }
 
 // 承运类三栏（BL 用）：Shipper / Consignee / Notify Party
 function tplTriParties(a, b, c) {
-  const cell = (label, name, addr) => `<td style="width:33.3%;vertical-align:top;padding:8px 10px;border:1px solid #dce3e9;background:#f6f9fb;"><div style="font-size:8.5px;font-weight:700;color:#8a98a5;letter-spacing:1px;margin-bottom:3px;">${label}</div><div style="font-size:11px;font-weight:700;color:#22303c;">${name}</div><div style="font-size:9.5px;color:#5a6b78;margin-top:2px;line-height:1.45;">${addr}</div></td>`;
+  const cell = (label, name, addr) => `<td style="width:33.3%;vertical-align:top;padding:9px 10px;border:1px solid #dce3e9;border-left:3px solid ${TPL_C};background:#f7f9fc;"><div style="font-size:8.5px;font-weight:700;color:#8a98a5;letter-spacing:1px;margin-bottom:4px;">${label}</div><div style="font-size:11px;font-weight:700;color:#22303c;">${name}</div><div style="font-size:9.5px;color:#5a6b78;margin-top:2px;line-height:1.45;">${addr}</div></td>`;
   return `<table style="width:100%;border-collapse:collapse;margin-bottom:12px;"><tr>${cell(a[0], a[1], a[2])}${cell(b[0], b[1], b[2])}${cell(c[0], c[1], c[2])}</tr></table>`;
 }
 
-// 货物明细表：No. / Description / HS Code / Quantity / Unit Price / Amount
+// 货物明细表：No. / Description / HS Code / Quantity / Unit Price / Amount（行斑马纹由 goodsCell 处理）
 function tplGoodsTable(totalLabel = "TOTAL") {
-  return `<table style="width:100%;border-collapse:collapse;margin-top:4px;"><thead><tr style="background:${TPL_C};color:#fff;"><th style="width:24px;padding:5px 4px;font-size:8.5px;font-weight:600;border:1px solid ${TPL_C};">No.</th><th style="padding:5px 8px;font-size:8.5px;font-weight:600;text-align:left;border:1px solid ${TPL_C};">Description of Goods</th><th style="width:54px;padding:5px 4px;font-size:8.5px;font-weight:600;border:1px solid ${TPL_C};">HS Code</th><th style="width:78px;padding:5px 4px;font-size:8.5px;font-weight:600;border:1px solid ${TPL_C};">Quantity</th><th style="width:70px;padding:5px 4px;font-size:8.5px;font-weight:600;border:1px solid ${TPL_C};">Unit Price<br><span style="font-size:7.5px;font-weight:400;">{{docCurrency}}</span></th><th style="width:84px;padding:5px 4px;font-size:8.5px;font-weight:600;border:1px solid ${TPL_C};">Amount<br><span style="font-size:7.5px;font-weight:400;">{{docCurrency}}</span></th></tr></thead><tbody>{{docGoodsRows}}</tbody><tfoot><tr style="background:#f0f4f8;"><td colspan="5" style="padding:5px 8px;border:1px solid #dce3e9;font-size:10px;font-weight:700;text-align:right;color:#22303c;">${totalLabel}</td><td style="padding:5px 8px;border:1px solid #dce3e9;font-size:10.5px;font-weight:800;text-align:right;color:${TPL_C};">{{docCurrency}} {{docAmount}}</td></tr></tfoot></table>`;
+  return `<table style="width:100%;border-collapse:collapse;margin-top:5px;"><thead><tr style="background:${TPL_C};color:#fff;"><th style="width:24px;padding:6px 4px;font-size:8.5px;font-weight:700;border:1px solid ${TPL_C};">No.</th><th style="padding:6px 8px;font-size:8.5px;font-weight:700;text-align:left;border:1px solid ${TPL_C};">Description of Goods</th><th style="width:52px;padding:6px 4px;font-size:8.5px;font-weight:700;border:1px solid ${TPL_C};">HS Code</th><th style="width:76px;padding:6px 4px;font-size:8.5px;font-weight:700;border:1px solid ${TPL_C};">Quantity</th><th style="width:68px;padding:6px 4px;font-size:8.5px;font-weight:700;border:1px solid ${TPL_C};">Unit Price<br><span style="font-size:7px;font-weight:400;">{{docCurrency}}</span></th><th style="width:82px;padding:6px 4px;font-size:8.5px;font-weight:700;border:1px solid ${TPL_C};">Amount<br><span style="font-size:7px;font-weight:400;">{{docCurrency}}</span></th></tr></thead><tbody>{{docGoodsRows}}</tbody><tfoot><tr style="background:#e9eff7;"><td colspan="5" style="padding:6px 8px;border:1px solid #dce3e9;font-size:10px;font-weight:700;text-align:right;color:#22303c;">${totalLabel}</td><td style="padding:6px 8px;border:1px solid #dce3e9;font-size:11px;font-weight:800;text-align:right;color:${TPL_C};">{{docCurrency}} {{docAmount}}</td></tr></tfoot></table>`;
 }
 
 // 无价货物表（PL/SA/CO/BL/AWB 用）：不含单价金额，合计行可显示总数量
 function tplGoodsTablePlain(totalLabel = "TOTAL", totalVal = "{{docTotalQty}}") {
-  return `<table style="width:100%;border-collapse:collapse;margin-top:4px;"><thead><tr style="background:${TPL_C};color:#fff;"><th style="width:24px;padding:5px 4px;font-size:8.5px;font-weight:600;border:1px solid ${TPL_C};">No.</th><th style="padding:5px 8px;font-size:8.5px;font-weight:600;text-align:left;border:1px solid ${TPL_C};">Description of Goods</th><th style="width:54px;padding:5px 4px;font-size:8.5px;font-weight:600;border:1px solid ${TPL_C};">HS Code</th><th style="width:110px;padding:5px 4px;font-size:8.5px;font-weight:600;border:1px solid ${TPL_C};">Quantity</th></tr></thead><tbody>{{docGoodsRowsPlain}}</tbody><tfoot><tr style="background:#f0f4f8;"><td colspan="3" style="padding:5px 8px;border:1px solid #dce3e9;font-size:10px;font-weight:700;text-align:right;color:#22303c;">${totalLabel}</td><td style="padding:5px 8px;border:1px solid #dce3e9;font-size:10.5px;font-weight:800;text-align:right;color:${TPL_C};">${totalVal}</td></tr></tfoot></table>`;
+  return `<table style="width:100%;border-collapse:collapse;margin-top:5px;"><thead><tr style="background:${TPL_C};color:#fff;"><th style="width:24px;padding:6px 4px;font-size:8.5px;font-weight:700;border:1px solid ${TPL_C};">No.</th><th style="padding:6px 8px;font-size:8.5px;font-weight:700;text-align:left;border:1px solid ${TPL_C};">Description of Goods</th><th style="width:52px;padding:6px 4px;font-size:8.5px;font-weight:700;border:1px solid ${TPL_C};">HS Code</th><th style="width:108px;padding:6px 4px;font-size:8.5px;font-weight:700;border:1px solid ${TPL_C};">Quantity</th></tr></thead><tbody>{{docGoodsRowsPlain}}</tbody><tfoot><tr style="background:#e9eff7;"><td colspan="3" style="padding:6px 8px;border:1px solid #dce3e9;font-size:10px;font-weight:700;text-align:right;color:#22303c;">${totalLabel}</td><td style="padding:6px 8px;border:1px solid #dce3e9;font-size:11px;font-weight:800;text-align:right;color:${TPL_C};">${totalVal}</td></tr></tfoot></table>`;
 }
 
 // 金额大写
 function tplAmountWords() {
-  return `<div style="margin-top:7px;font-size:10.5px;color:#22303c;"><span style="color:#5a6b78;font-weight:700;">Amount in Words:</span> <b>{{docAmountWords}}</b></div>`;
+  return `<div style="margin-top:8px;font-size:10.5px;color:#22303c;"><span style="color:#5a6b78;font-weight:700;">Amount in Words:</span> <b>{{docAmountWords}}</b></div>`;
 }
 
-// 明细行（label / value 两列；value 保留换行，供唛头/银行多行）
+// 明细行（label / value 两列；label 深蓝底）
 function tplDetails(rows) {
-  return `<table style="width:100%;border-collapse:collapse;margin-top:10px;">${rows.map((r) => `<tr><td style="width:150px;padding:4.5px 10px;border:1px solid #dce3e9;background:#f4f7f9;font-size:10px;font-weight:600;color:#5a6b78;">${r[0]}</td><td style="padding:4.5px 12px;border:1px solid #dce3e9;font-size:10.5px;color:#22303c;white-space:pre-wrap;">${r[1]}</td></tr>`).join("")}</table>`;
+  return `<table style="width:100%;border-collapse:collapse;margin-top:10px;">${rows.map((r) => `<tr><td style="width:160px;padding:5px 10px;border:1px solid #dce3e9;background:#eef2f8;font-size:10px;font-weight:700;color:${TPL_C};">${r[0]}</td><td style="padding:5px 12px;border:1px solid #dce3e9;font-size:10.5px;color:#22303c;white-space:pre-wrap;">${r[1]}</td></tr>`).join("")}</table>`;
 }
 
 // 装箱/运输汇总框（labels 可定制，如 BL 去掉净重）
 function tplShipSummary(labels = [["TOTAL CARTONS", "{{docCartonCount}}", "CTNS"], ["GROSS WEIGHT", "{{docGrossWeight}}", "KGS"], ["NET WEIGHT", "{{docNetWeight}}", "KGS"], ["MEASUREMENT", "{{docVolumeVal}}", "CBM"]]) {
-  return `<table style="width:100%;border-collapse:collapse;margin-bottom:10px;"><tr>${labels.map(([k, v, u]) => `<td style="width:${Math.floor(100 / labels.length)}%;padding:7px 8px;border:1px solid #dce3e9;background:#f6f9fb;"><div style="font-size:8.5px;font-weight:700;color:#8a98a5;letter-spacing:0.5px;">${k}</div><div style="font-size:12px;font-weight:800;color:${TPL_C};margin-top:2px;">${v} <span style="font-size:8.5px;color:#8a98a5;font-weight:600;">${u}</span></div></td>`).join("")}</tr></table>`;
+  return `<table style="width:100%;border-collapse:collapse;margin-bottom:10px;"><tr>${labels.map(([k, v, u]) => `<td style="width:${Math.floor(100 / labels.length)}%;padding:8px 8px;border:1px solid #dce3e9;background:#f7f9fc;"><div style="font-size:8.5px;font-weight:700;color:#8a98a5;letter-spacing:0.5px;">${k}</div><div style="font-size:12.5px;font-weight:800;color:${TPL_C};margin-top:2px;">${v} <span style="font-size:8.5px;color:#8a98a5;font-weight:600;">${u}</span></div></td>`).join("")}</tr></table>`;
 }
 
 // 唛头框
 function tplMarks() {
-  return `<div style="margin-top:10px;border:1px solid #dce3e9;background:#fbfcfe;padding:7px 12px;"><div style="font-size:8.5px;font-weight:700;color:#8a98a5;letter-spacing:1.5px;margin-bottom:2px;">SHIPPING MARKS</div><div style="font-size:10.5px;color:#22303c;white-space:pre-wrap;">{{docMarks}}</div></div>`;
+  return `<div style="margin-top:10px;border:1px solid #dce3e9;border-left:3px solid ${TPL_C};background:#fbfcfe;padding:8px 12px;"><div style="font-size:8.5px;font-weight:700;color:#8a98a5;letter-spacing:1.5px;margin-bottom:3px;">SHIPPING MARKS</div><div style="font-size:10.5px;color:#22303c;white-space:pre-wrap;">{{docMarks}}</div></div>`;
 }
 
 // 银行信息
 function tplBank() {
-  return `<div style="margin-top:10px;font-size:10px;color:#5a6b78;line-height:1.7;"><div style="font-weight:700;color:#22303c;letter-spacing:0.5px;margin-bottom:2px;">BANK DETAILS</div><div style="white-space:pre-wrap;">{{docBank}}</div></div>`;
+  return `<div style="margin-top:10px;font-size:10px;color:#5a6b78;line-height:1.7;"><div style="font-weight:700;color:#22303c;letter-spacing:0.5px;margin-bottom:3px;">BANK DETAILS</div><div style="white-space:pre-wrap;">{{docBank}}</div></div>`;
 }
 
 // 条款框（PI/CI）
 function tplTerms(lines) {
-  return `<div style="margin-top:12px;border:1px solid #dce3e9;border-left:3px solid ${TPL_C};padding:8px 12px;font-size:10px;color:#5a6b78;line-height:1.75;"><div style="font-weight:700;color:#22303c;margin-bottom:3px;">TERMS &amp; CONDITIONS</div>${lines}</div>`;
+  return `<div style="margin-top:12px;border:1px solid #dce3e9;border-left:3px solid #c8a24a;padding:9px 12px;font-size:10px;color:#5a6b78;line-height:1.75;"><div style="font-weight:700;color:#22303c;margin-bottom:4px;">TERMS &amp; CONDITIONS</div>${lines}</div>`;
 }
 
 // 备注
@@ -2157,12 +2181,15 @@ function tplNotes() {
 
 // 签章区
 function tplSignature(leftLabel, leftName, rightLabel) {
-  return `<div style="margin-top:14px;display:flex;justify-content:space-between;align-items:flex-end;"><div style="min-width:220px;"><div style="font-size:9px;color:#8a98a5;letter-spacing:0.5px;">${leftLabel}</div><div style="font-size:11px;font-weight:700;color:#22303c;margin-top:12px;">${leftName}</div></div><div style="width:210px;text-align:center;"><div style="font-size:9px;color:#8a98a5;letter-spacing:0.5px;">${rightLabel}</div><div style="margin-top:12px;border-top:1px solid #9aa8b3;padding-top:5px;font-size:10px;color:#4b5c69;">Signature / Date</div></div></div>`;
+  return `<div style="margin-top:16px;display:flex;justify-content:space-between;align-items:flex-end;">
+    <div style="min-width:230px;"><div style="font-size:9px;color:#8a98a5;letter-spacing:0.5px;">${leftLabel}</div><div style="font-size:12px;font-weight:700;color:#22303c;margin-top:14px;">${leftName}</div></div>
+    <div style="width:210px;text-align:center;"><div style="font-size:9px;color:#8a98a5;letter-spacing:0.5px;">${rightLabel}</div><div style="margin-top:14px;border-top:1.5px solid #9aa8b3;padding-top:6px;font-size:10px;color:#4b5c69;">Signature / Date</div></div>
+  </div>`;
 }
 
 // 运费条款（BL 用）：只填 FREIGHT PREPAID / FREIGHT COLLECT
 function tplFreight() {
-  return `<div style="margin-top:10px;border:1px solid #dce3e9;padding:7px 12px;font-size:10.5px;color:#22303c;background:#fbfcfe;"><b>Freight:</b> {{docFreight}}</div>`;
+  return `<div style="margin-top:10px;border:1px solid #dce3e9;border-left:3px solid ${TPL_C};padding:8px 12px;font-size:10.5px;color:#22303c;background:#fbfcfe;"><b>Freight:</b> {{docFreight}}</div>`;
 }
 
 // AWB 非流通声明
@@ -2172,7 +2199,7 @@ function tplNotNegotiable() {
 
 // 页脚：单据号 + 页码
 function tplFooter() {
-  return `<div style="position:absolute;left:54px;right:54px;bottom:20px;border-top:1px solid #e3e9ee;padding-top:7px;display:flex;justify-content:space-between;font-size:8.5px;color:#a3afb8;"><span>{{docInvoiceNo}} · Page 1 / 1</span><span>{{docSellerAddress}}</span></div>`;
+  return `<div style="position:absolute;left:48px;right:48px;bottom:18px;border-top:1px solid #e3e9ee;padding-top:7px;display:flex;justify-content:space-between;font-size:8.5px;color:#a3afb8;"><span>{{docInvoiceNo}} · Page 1 / 1</span><span>{{docSellerAddress}}</span></div>`;
 }
 
 function buildDefaultDocTemplates() {
@@ -2421,9 +2448,8 @@ function fillDocFromOrder(id) {
   state.docBuilder.docItems = orderItems.map((it) => {
     const p = it.pid ? state.products.find((x) => x.id === it.pid)
       : state.products.find((x) => (it.name || "").includes(x.name) || (it.name || "").includes(x.model));
-    const desc = (p && (p.nameEn || p.model || p.name)) || it.name || "";
     return {
-      desc,
+      desc: resolveProductEnglish(it.name, it.pid),
       hs: it.hs || (p ? p.hsCode : "") || "",
       qty: it.qty ? String(it.qty).replace(/\B(?=(\d{3})+(?!\d))/g, ",") : "",
       unitPrice: it.unitPrice || ""
@@ -3167,9 +3193,9 @@ function renderTemplateHtml(html, data) {
     const base = `<td style="padding:3.5px 4px;border:1px solid #dce3e9;text-align:center;font-size:9px;color:#5a6b78;">${i + 1}</td><td style="padding:3.5px 8px;border:1px solid #dce3e9;font-size:9px;color:#22303c;">${esc(it.desc || "-")}</td><td style="padding:3.5px 4px;border:1px solid #dce3e9;font-size:9px;color:#22303c;">${esc(it.hs || "-")}</td><td style="padding:3.5px 4px;border:1px solid #dce3e9;font-size:9px;text-align:right;color:#22303c;">${esc(it.qty || "-")}</td>`;
     return priceCols ? base + `<td style="padding:3.5px 4px;border:1px solid #dce3e9;font-size:9px;text-align:right;color:#22303c;">${fmt(Number(it.unitPrice) || 0, 2)}</td><td style="padding:3.5px 4px;border:1px solid #dce3e9;font-size:9px;text-align:right;color:#22303c;font-weight:700;">${fmt(amt, 2)}</td>` : base;
   };
-  values.docGoodsRows = items.length ? items.map((it, i) => `<tr>${goodsCell(it, i, true)}</tr>`).join("") : `<tr><td colspan="6" style="padding:5px 8px;border:1px solid #dce3e9;font-size:9.5px;color:#8a98a5;">-</td></tr>`;
+  values.docGoodsRows = items.length ? items.map((it, i) => `<tr${i % 2 ? ` style="background:#f7f9fc;"` : ""}>${goodsCell(it, i, true)}</tr>`).join("") : `<tr><td colspan="6" style="padding:5px 8px;border:1px solid #dce3e9;font-size:9.5px;color:#8a98a5;">-</td></tr>`;
   // 无价货物行（No/Desc/HS/Qty，PL/SA/CO/BL/AWB 用）
-  values.docGoodsRowsPlain = items.length ? items.map((it, i) => `<tr>${goodsCell(it, i, false)}</tr>`).join("") : `<tr><td colspan="4" style="padding:5px 8px;border:1px solid #dce3e9;font-size:9.5px;color:#8a98a5;">-</td></tr>`;
+  values.docGoodsRowsPlain = items.length ? items.map((it, i) => `<tr${i % 2 ? ` style="background:#f7f9fc;"` : ""}>${goodsCell(it, i, false)}</tr>`).join("") : `<tr><td colspan="4" style="padding:5px 8px;border:1px solid #dce3e9;font-size:9.5px;color:#8a98a5;">-</td></tr>`;
   // 先替换 raw 占位符，其余字段统一转义（空值显示 "-"）
   html = html.split("{{docGoodsRows}}").join(values.docGoodsRows);
   html = html.split("{{docGoodsRowsPlain}}").join(values.docGoodsRowsPlain);
@@ -3995,7 +4021,7 @@ function renderOrders() {
       <td class="${profitCls}">${o.profit !== undefined && o.profit !== null ? `¥${fmt(o.profit)}` : "—"}</td>
       <td><select class="js-order-status" data-id="${o.id}" style="min-width:108px">${ORDER_STATUSES.map((s) => `<option ${s === o.status ? "selected" : ""}>${s}</option>`).join("")}</select></td>
       <td>${esc(o.deliveryDate || "—")}</td><td>${esc(o.port || "—")}</td><td>${esc(o.tracking || "—")}</td>
-      <td><div class="actions"><button class="icon-btn js-copy-order" data-id="${o.id}" title="复制摘要"><i data-lucide="copy"></i></button><button class="icon-btn js-edit-order" data-id="${o.id}" title="编辑"><i data-lucide="pencil"></i></button><button class="icon-btn js-del-order" data-id="${o.id}" title="删除"><i data-lucide="trash-2"></i></button></div></td></tr>`;
+      <td><div class="actions"><button class="icon-btn js-order-to-doc" data-id="${o.id}" title="生成单证"><i data-lucide="file-text"></i></button><button class="icon-btn js-copy-order" data-id="${o.id}" title="复制摘要"><i data-lucide="copy"></i></button><button class="icon-btn js-edit-order" data-id="${o.id}" title="编辑"><i data-lucide="pencil"></i></button><button class="icon-btn js-del-order" data-id="${o.id}" title="删除"><i data-lucide="trash-2"></i></button></div></td></tr>`;
     }).join("") : `<tr><td colspan="11" class="empty-state">暂无订单</td></tr>`
   }</tbody>`;
   refreshIcons();
@@ -4792,6 +4818,8 @@ function init() {
         toast("产品已删除");
       }
     }
+    const toDoc = e.target.closest(".js-order-to-doc");
+    if (toDoc) { go("docs"); setTimeout(() => fillDocFromOrder(toDoc.dataset.id), 50); }
     const copyOrder = e.target.closest(".js-copy-order");
     if (copyOrder) copyOrderSummary(copyOrder.dataset.id);
     const editOrder = e.target.closest(".js-edit-order");
