@@ -90,6 +90,7 @@ const RATE = {
   login: { limit: envInt("RATE_LOGIN", 20, 1, 10000), windowMs: 15 * 60 * 1000 },
   register: { limit: envInt("RATE_REGISTER", 30, 1, 10000), windowMs: 15 * 60 * 1000 },
   admin: { limit: envInt("RATE_ADMIN", 20, 1, 10000), windowMs: 15 * 60 * 1000 },
+  license: { limit: envInt("RATE_LICENSE", 10, 1, 10000), windowMs: 15 * 60 * 1000 },
   state: { limit: envInt("RATE_STATE", 300, 1, 100000), windowMs: 60 * 1000 },
 };
 const rateBuckets = new Map();
@@ -304,21 +305,24 @@ const handler = (req, res) => {
     if (pathname === "/api/license" && method === "GET") {
       const st = licenseInfo();
       // 机器码是签发授权所需（客户读给授权方），故公开；不暴露注册码配置等敏感信息
-      json(res, 200, { ...st, userCount: userCount() });
+      // adminAccount：登录页显示"试用账号/初始密码"提示（仅提示，密码本身不存储，靠 TRIAL_PASS_HINT 或默认）
+      const users = loadUsers();
+      const adminName = Object.keys(users).find((n) => users[n].role === "admin") || "";
+      const passHint = String(process.env.TRIAL_PASS_HINT || "admin123");
+      json(res, 200, { ...st, userCount: userCount(), adminAccount: { username: adminName, passHint } });
       return;
     }
     if (pathname === "/api/license" && method === "POST") {
-      const me = authUser(req);
-      if (!me) { json(res, 401, { error: "未登录" }); return; }
-      if (!isAdmin(me.username)) { json(res, 403, { error: "需要管理员权限" }); return; }
-      const rl = rateLimit(rlKey("admin"), "admin");
+      // 授权码本身携带签名 + 机器绑定，即为激活凭据：允许登录前在登录页直接激活（无需先登录管理员）
+      const rl = rateLimit(rlKey("license"), "license");
       if (!rl.ok) { json(res, 429, { error: "操作过于频繁，请稍后再试" }); return; }
       readBody(req, (body) => {
         const d = parseJsonBody(body);
         const key = String((d && d.key) || "").trim();
         if (!key) { json(res, 400, { error: "请粘贴授权码" }); return; }
+        const me = authUser(req);
         const r = license.activate(DATA_DIR, key);
-        audit("license.activate", `${me.username} → ${r.ok ? "OK" : r.error}`);
+        audit("license.activate", `${me ? me.username : "(登录前激活)"} → ${r.ok ? "OK" : r.error}`);
         json(res, r.ok ? 200 : 400, r.ok ? { ok: true, ...r } : { error: r.error });
       });
       return;

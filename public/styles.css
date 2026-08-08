@@ -728,3 +728,10 @@ textarea { resize: vertical; min-height: 90px; line-height: 1.55; }
 #licenseActivateRow { flex-direction: row; align-items: center; width: 100%; }
 #licenseKeyInput { flex: 1; min-width: 0; padding: 6px 10px; border: 1px solid #dce3e9; border-radius: 6px; }
 .auth-license-hint { margin-top: 8px; font-size: 12px; color: #8a98a5; text-align: center; min-height: 16px; }
+.auth-license-box { margin-top: 10px; padding: 10px; border-top: 1px dashed #e2e8f0; }
+.auth-license-box .auth-license-hint { margin-top: 0; line-height: 1.6; }
+.auth-license-activate { display: flex; gap: 8px; margin-top: 8px; }
+.auth-license-activate input { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid #dce3e9; border-radius: 6px; font-size: 13px; }
+.auth-license-result { margin-top: 8px; font-size: 13px; text-align: center; line-height: 1.6; }
+.auth-license-result .ok { color: #16a34a; }
+.auth-license-result .err { color: #dc2626; }

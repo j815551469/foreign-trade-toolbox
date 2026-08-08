@@ -268,16 +268,25 @@ function showAuthLogin() {
   updateAuthLicenseHint();
 }
 
-// 登录页显示试用剩余/到期提示
+// 登录页：试用状态 + 试用账号提示 + 已激活公司名/到期日
 async function updateAuthLicenseHint() {
   const el = $("#authLicenseHint");
   if (!el) return;
+  const result = $("#authLicenseResult");
+  if (result) result.innerHTML = "";
   try {
     const r = await fetch("api/license", { cache: "no-store" });
     const d = await r.json();
-    if (d.mode === "trial") el.textContent = `试用剩余 ${Number(d.daysLeft) || 0} 天 · 可注册 ${Number(d.seats) || "-"} 个账号`;
-    else if (d.mode === "expired") el.textContent = "试用已到期，请联系授权方获取授权码（管理员登录后可在设置页激活）";
-    else el.textContent = "";
+    const admin = (d.adminAccount && d.adminAccount.username) || "";
+    const pass = (d.adminAccount && d.adminAccount.passHint) || "";
+    if (d.mode === "licensed") {
+      el.innerHTML = `<span style="color:#16a34a"><i data-lucide="badge-check"></i> 已激活授权 · <strong>${esc(d.company || "")}</strong> · ${Number(d.seats) || "-"} 席位 · 到期 ${esc(String(d.expires || "").slice(0, 10) || "永久")}</span>`;
+    } else if (d.mode === "trial") {
+      el.innerHTML = `试用剩余 <strong>${Number(d.daysLeft) || 0} 天</strong> · 可注册 ${Number(d.seats) || "-"} 个账号${admin ? `<br>试用账号：<strong>${esc(admin)}</strong> / 初始密码 <strong>${esc(pass)}</strong>（登录后请尽快修改密码）` : ""}`;
+    } else {
+      el.innerHTML = `<span style="color:#dc2626">试用已到期，请粘贴授权码激活</span>`;
+    }
+    refreshIcons();
   } catch (e) { el.textContent = ""; }
 }
 
@@ -3212,19 +3221,34 @@ async function renderLicenseStatus() {
     statusEl.innerHTML = `<span class="cell-sub">未通过服务器访问（本机模式，无授权限制）</span>`;
   }
 }
-async function activateLicense() {
-  const key = ($("#licenseKeyInput").value || "").trim();
+async function activateLicense(ev) {
+  // 按点击的按钮就近取输入框（登录页 #authLicenseKey / 设置页 #licenseKeyInput，二者都在 DOM 里）
+  let keyEl = null;
+  if (ev && ev.currentTarget) {
+    keyEl = ev.currentTarget.closest("#licenseActivateRow")?.querySelector("#licenseKeyInput")
+      || ev.currentTarget.closest(".auth-license-activate")?.querySelector("#authLicenseKey");
+  }
+  keyEl = keyEl || $("#licenseKeyInput") || $("#authLicenseKey");
+  const key = ((keyEl && keyEl.value) || "").trim();
   if (!key) { toast("请先粘贴授权码"); return; }
+  const result = $("#authLicenseResult");
   try {
     const r = await fetch("api/license", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + auth.token },
+      headers: { "Content-Type": "application/json" }, // 授权码本身即凭据：登录页可免登录激活
       body: JSON.stringify({ key })
     });
     const d = await r.json();
-    if (!r.ok) { toast(d.error || "激活失败"); return; }
+    if (!r.ok) {
+      if (result) result.innerHTML = `<span class="err">激活失败：${esc(d.error || "授权码无效")}</span>`;
+      toast(d.error || "激活失败");
+      return;
+    }
+    if (result) result.innerHTML = `<span class="ok"><i data-lucide="badge-check"></i> 已激活授权 · <strong>${esc(d.company || "")}</strong> · ${Number(d.seats) || "-"} 席位 · 到期 ${esc(String(d.expires || "").slice(0, 10) || "永久")}</span>`;
+    refreshIcons();
     toast("授权激活成功");
-    await renderLicenseStatus();
+    await updateAuthLicenseHint();
+    if (typeof renderLicenseStatus === "function") renderLicenseStatus();
     if (typeof renderUserManagement === "function") renderUserManagement();
   } catch (e) { toast("无法连接服务器"); }
 }
@@ -4607,8 +4631,9 @@ function init() {
     const delBtn = e.target.closest(".js-user-del");
     if (delBtn) { deleteUser(delBtn.dataset.user); return; }
   });
-  // 授权/试用
+  // 授权/试用（设置页 + 登录页激活按钮）
   $("#activateLicenseBtn")?.addEventListener("click", activateLicense);
+  $("#authLicenseBtn")?.addEventListener("click", activateLicense);
 
   // 登录/注册
   $("#authLoginBtn").addEventListener("click", doLogin);
