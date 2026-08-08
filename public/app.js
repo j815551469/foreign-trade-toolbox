@@ -312,6 +312,11 @@ function openLicenseModal() {
     <div class="modal">
       <div class="modal-head"><h3>授权管理</h3><button class="icon-btn" id="modalCloseBtn"><i data-lucide="x"></i></button></div>
       <div class="form-grid">
+        <div class="lic-machine" style="grid-column:1/-1">
+          <span>本机机器码</span>
+          <code id="licMachineCode">-</code>
+          <button type="button" class="copybtn" id="licMachineCopy">复制</button>
+        </div>
         <label style="grid-column:1/-1">授权码<input id="authLicenseKey" placeholder="粘贴授权码（激活后显示公司名与到期日）" autocomplete="off"></label>
         <div id="licModalHint" style="grid-column:1/-1" class="hint"></div>
         <div id="authLicenseResult" style="grid-column:1/-1"></div>
@@ -319,12 +324,18 @@ function openLicenseModal() {
       <div class="modal-actions"><button class="btn" id="modalCancelBtn">取消</button><button class="btn primary" id="authLicenseBtn"><i data-lucide="key-round"></i><span>激活授权</span></button></div>
     </div>`);
   fetch("api/license", { cache: "no-store" }).then((rr) => rr.json()).then((d) => {
+    const mc = $("#licMachineCode");
+    if (mc && d.machine) mc.textContent = d.machine;
     const h = $("#licModalHint");
     if (!h) return;
     if (d.mode === "licensed") h.textContent = `当前：已激活授权 · ${d.company || ""} · ${Number(d.seats) || "-"} 席位 · 到期 ${String(d.expires || "").slice(0, 10) || "永久"}。粘贴新授权码可更换。`;
-    else if (d.mode === "trial") h.textContent = `当前：试用剩余 ${Number(d.daysLeft) || 0} 天（${Number(d.seats) || "-"} 席位）。授权码由授权方提供。`;
-    else h.textContent = "试用已到期，请粘贴授权码激活。";
+    else if (d.mode === "trial") h.textContent = `当前：试用剩余 ${Number(d.daysLeft) || 0} 天（${Number(d.seats) || "-"} 席位）。把机器码发给授权方即可获取授权码。`;
+    else h.textContent = "试用已到期，请粘贴授权码激活。把机器码发给授权方获取授权码。";
   }).catch(() => { /* ignore */ });
+  $("#licMachineCopy")?.addEventListener("click", () => {
+    const code = ($("#licMachineCode")?.textContent || "").trim();
+    if (code && code !== "-") { copyText(code); toast("机器码已复制"); }
+  });
   $("#authLicenseBtn")?.addEventListener("click", activateLicense);
   $("#authLicenseKey")?.focus();
 }

@@ -614,17 +614,35 @@
       <div class="auth-brand"><strong>外贸业务员工具箱</strong><small>Trade Desk · 局域网多用户版 <span id="appVersion"></span></small></div>
       <div id="authLoading" class="auth-loading">正在连接服务器…</div>
       <div id="authLoginForm" class="auth-form" style="display:none">
-        <input id="authUsername" placeholder="用户名" autocomplete="username">
-        <input id="authPassword" type="password" placeholder="密码" autocomplete="current-password">
+        <div class="auth-field">
+          <label for="authUsername">用户名</label>
+          <input id="authUsername" placeholder="请输入用户名" autocomplete="username">
+        </div>
+        <div class="auth-field">
+          <label for="authPassword">密码</label>
+          <input id="authPassword" type="password" placeholder="请输入密码" autocomplete="current-password">
+        </div>
         <button class="btn primary auth-btn" id="authLoginBtn"><i data-lucide="log-in"></i><span>登录</span></button>
         <div class="auth-switch"><span>还没有账号？</span><button class="link-btn" id="authShowRegister">注册新账号</button></div>
         <div id="authError" class="auth-error"></div>
       </div>
       <div id="authRegisterForm" class="auth-form" style="display:none">
-        <input id="regUsername" placeholder="用户名（登录用）" autocomplete="username">
-        <input id="regDisplayName" placeholder="姓名 / 业务员名称">
-        <input id="regPassword" type="password" placeholder="密码（至少 8 位）" autocomplete="new-password">
-        <input id="regKey" type="password" placeholder="注册邀请码（问管理员要）" autocomplete="off">
+        <div class="auth-field">
+          <label for="regUsername">用户名（登录用）</label>
+          <input id="regUsername" placeholder="请输入用户名" autocomplete="username">
+        </div>
+        <div class="auth-field">
+          <label for="regDisplayName">姓名 / 业务员名称</label>
+          <input id="regDisplayName" placeholder="请输入姓名">
+        </div>
+        <div class="auth-field">
+          <label for="regPassword">密码</label>
+          <input id="regPassword" type="password" placeholder="至少 8 位" autocomplete="new-password">
+        </div>
+        <div class="auth-field">
+          <label for="regKey">注册邀请码</label>
+          <input id="regKey" type="password" placeholder="自动填入" autocomplete="off">
+        </div>
         <button class="btn primary auth-btn" id="regBtn"><i data-lucide="user-plus"></i><span>注册</span></button>
         <div class="auth-switch"><span>已有账号？</span><button class="link-btn" id="authShowLogin">返回登录</button></div>
         <div id="authError2" class="auth-error"></div>
