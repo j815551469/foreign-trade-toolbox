@@ -30,13 +30,15 @@ const STORE_KEY = "tradeToolboxV1";
 // 单证模板版本：版本升级时重建默认模板（丢弃旧版 localStorage 里的模板），保证用户拿到最新专业版
 const DOC_TPL_VERSION = 2;
 const defaultRates = () => Object.fromEntries(TRADE_DATA.currencies.map((c) => [c.code, c.rate]));
+// 给内置演示数据打上 _demo 标记（管理员"清空初始演示数据"按此识别，只删演示、绝不删用户自建数据）
+const markDemo = (arr) => JSON.parse(JSON.stringify(arr || [])).map((x) => ({ ...x, _demo: true }));
 const defaultState = () => ({
-  clients: JSON.parse(JSON.stringify(DEMO_CLIENTS)),
-  quotes: JSON.parse(JSON.stringify(DEMO_QUOTES)),
-  products: JSON.parse(JSON.stringify(TRADE_DATA.products)),
-  orders: JSON.parse(JSON.stringify(TRADE_DATA.orders)),
-  colorDict: JSON.parse(JSON.stringify(TRADE_DATA.colorDict)),
-  hsCodes: JSON.parse(JSON.stringify(TRADE_DATA.hsCodes)),
+  clients: markDemo(DEMO_CLIENTS),
+  quotes: markDemo(DEMO_QUOTES),
+  products: markDemo(TRADE_DATA.products),
+  orders: markDemo(TRADE_DATA.orders),
+  colorDict: markDemo(TRADE_DATA.colorDict),
+  hsCodes: markDemo(TRADE_DATA.hsCodes),
   logisticsItems: [{ id: "lg1", name: "默认货物", len: 60, width: 40, height: 35, weight: 18, qty: 500 }],
   logisticsRates: JSON.parse(JSON.stringify(TRADE_DATA.logisticsRates)),
   containers: JSON.parse(JSON.stringify(TRADE_DATA.containers)),
@@ -3207,6 +3209,9 @@ function renderSettings() {
     umPanel.style.display = auth.role === "admin" ? "" : "none";
     if (auth.role === "admin") renderUserManagement();
   }
+  // 清空初始演示数据仅管理员可见
+  const cdBtn = $("#clearDemoBtn");
+  if (cdBtn) cdBtn.style.display = auth.role === "admin" ? "" : "none";
   renderLicenseStatus();
 }
 
@@ -4184,6 +4189,44 @@ async function resetData() {
   toast("已恢复演示数据");
 }
 
+// —— 清空初始演示数据（仅管理员）——
+// 从 data.js 的内置演示数据提取 id 集合（含 id/code），服务器据此删除所有用户文件里的演示项
+function buildDemoIds() {
+  const ids = (arr) => (arr || []).map((x) => x && (x.id || x.code)).filter(Boolean);
+  return {
+    clients: ids(DEMO_CLIENTS),
+    products: ids(TRADE_DATA.products),
+    orders: ids(TRADE_DATA.orders),
+    quotes: ids(DEMO_QUOTES),
+    hsCodes: ids(TRADE_DATA.hsCodes),
+    colorDict: ids(TRADE_DATA.colorDict),
+  };
+}
+async function clearDemoData() {
+  if (!confirm("将删除所有账号里内置的演示数据（演示客户/产品/订单/报价/HS编码/颜色字典），不会删除你自行添加的数据。此操作不可撤销，确定继续？")) return;
+  try {
+    const r = await fetch("api/state/clear-demo", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + auth.token },
+      body: JSON.stringify({ demoIds: buildDemoIds() })
+    });
+    const d = await r.json();
+    if (!r.ok) { toast(d.error || "操作失败"); return; }
+    toast(`已清除 ${d.cleared || 0} 条演示数据`);
+    // 强制从服务器重载（绕过"本地更新优先"保护），让清除后的数据立即生效
+    clearTimeout(serverSaveTimer); serverSaveTimer = null;
+    try {
+      const res = await fetch("api/state", { headers: { Authorization: "Bearer " + auth.token }, cache: "no-store" });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && typeof data === "object") { state = normalizeState(data); localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
+      }
+    } catch (e) { /* ignore */ }
+    renderSettings();
+    if (typeof renderDashboard === "function") renderDashboard();
+  } catch (e) { toast("无法连接服务器"); }
+}
+
 // —— Ctrl+K 全局搜索 ——
 function openGlobalSearch() {
   openModal(`
@@ -4627,6 +4670,7 @@ function init() {
   $("#importDataBtn").addEventListener("click", () => $("#importDataFile").click());
   $("#importDataFile").addEventListener("change", (e) => { if (e.target.files[0]) importData(e.target.files[0]); e.target.value = ""; });
   $("#resetDataBtn").addEventListener("click", resetData);
+  $("#clearDemoBtn")?.addEventListener("click", clearDemoData);
   // 用户管理（管理员）
   $("#refreshUsersBtn")?.addEventListener("click", renderUserManagement);
   $("#userManageList")?.addEventListener("click", (e) => {

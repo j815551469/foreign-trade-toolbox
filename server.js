@@ -568,6 +568,45 @@ const handler = (req, res) => {
       return;
     }
 
+    // ---- 清空初始演示数据（仅管理员）：按演示 id / _demo 标记删除各用户文件中的演示数据，绝不碰用户自建数据 ----
+    if (pathname === "/api/state/clear-demo" && method === "POST") {
+      const me = authUser(req);
+      if (!me) { json(res, 401, { error: "未登录" }); return; }
+      if (!isAdmin(me.username)) { json(res, 403, { error: "需要管理员权限" }); return; }
+      const rl = rateLimit(rlKey("admin"), "admin");
+      if (!rl.ok) { json(res, 429, { error: "操作过于频繁" }); return; }
+      readBody(req, (body) => {
+        try {
+          const d = parseJsonBody(body);
+          const demoIds = (d && d.demoIds) || {};
+          const colls = ["clients", "products", "orders", "quotes", "hsCodes", "colorDict"];
+          if (!colls.every((k) => Array.isArray(demoIds[k]))) { json(res, 400, { error: "参数无效" }); return; }
+          let cleared = 0;
+          const files = fs.readdirSync(DATA_DIR).filter((f) => f.endsWith(".json") && f !== "users.json" && !f.includes(".bak") && !f.startsWith("."));
+          files.forEach((f) => {
+            const file = path.join(DATA_DIR, f);
+            try {
+              const state = JSON.parse(fs.readFileSync(file, "utf8"));
+              if (!state || typeof state !== "object") return;
+              let changed = false;
+              colls.forEach((k) => {
+                if (!Array.isArray(state[k])) return;
+                const ids = new Set(demoIds[k]);
+                const before = state[k].length;
+                state[k] = state[k].filter((it) => !(it && (it._demo || ids.has(it.id) || ids.has(it.code))));
+                cleared += before - state[k].length;
+                if (before !== state[k].length) changed = true;
+              });
+              if (changed) atomicWriteSync(file, JSON.stringify(state));
+            } catch (e) { /* 跳过无法解析的文件 */ }
+          });
+          audit("demo.clear", `by=${me.username} 清除演示数据 ${cleared} 条`);
+          json(res, 200, { ok: true, cleared });
+        } catch (e) { json(res, 500, { error: "操作失败" }); }
+      });
+      return;
+    }
+
     // ---- 静态文件 ----
     if (pathname === "/") pathname = "/index.html";
     let filePath = path.join(ROOT, pathname);
