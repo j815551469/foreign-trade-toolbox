@@ -1426,6 +1426,58 @@ function importClientsCsv(file) {
   reader.readAsArrayBuffer(file);
 }
 
+function importProductsCsv(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const bytes = new Uint8Array(reader.result);
+      let text = new TextDecoder("utf-8").decode(bytes);
+      if (text.includes("�")) { try { text = new TextDecoder("gbk").decode(bytes); } catch (e) { /* 保留 UTF-8 */ } }
+      const rows = parseCsvText(text);
+      if (rows.length < 2) { toast("CSV 内容为空"); return; }
+      const headers = rows[0].map((h) => String(h).trim().toLowerCase());
+      const idx = (keys) => { for (const k of keys) { const i = headers.indexOf(k); if (i >= 0) return i; } return -1; };
+      const iModel = idx(["型号", "model"]);
+      const iName = idx(["名称", "name", "产品名称"]);
+      const iNameEn = idx(["英文名", "nameen", "english", "en"]);
+      const iCategory = idx(["类别", "category"]);
+      const iHs = idx(["hs编码", "hs", "hscode"]);
+      const iCost = idx(["成本", "unitcost", "cost", "价格"]);
+      const iMoq = idx(["moq", "起订量"]);
+      const iCL = idx(["外箱长", "cartonl", "箱长"]);
+      const iCW = idx(["外箱宽", "cartonw", "箱宽"]);
+      const iCH = idx(["外箱高", "cartonh", "箱高"]);
+      const iCwt = idx(["每箱毛重", "cartonweight", "毛重"]);
+      const iQpc = idx(["每箱数量", "qtypercarton", "箱装量"]);
+      const iSup = idx(["供应商", "supplier"]);
+      const iNotes = idx(["备注", "notes", "note"]);
+      if (iModel < 0 && iName < 0) { toast("未找到型号/名称列，请使用 型号 或 名称 表头"); return; }
+      const existing = new Set(state.products.map((p) => `${p.model}|${p.name}`));
+      let added = 0, skipped = 0;
+      rows.slice(1).forEach((r) => {
+        const get = (i) => (i >= 0 && r[i] !== undefined ? String(r[i]).trim() : "");
+        const model = get(iModel), name = get(iName);
+        if (!model && !name) return;
+        const key = `${model}|${name}`;
+        if (existing.has(key)) { skipped++; return; }
+        state.products.unshift({
+          id: uid(), model, name, nameEn: get(iNameEn), category: get(iCategory), hsCode: get(iHs),
+          unitCost: Number(get(iCost)) || 0, moq: Number(get(iMoq)) || 0,
+          cartonL: Number(get(iCL)) || 0, cartonW: Number(get(iCW)) || 0, cartonH: Number(get(iCH)) || 0,
+          cartonWeight: Number(get(iCwt)) || 0, qtyPerCarton: Number(get(iQpc)) || 0,
+          supplier: get(iSup), notes: get(iNotes),
+        });
+        existing.add(key);
+        added++;
+      });
+      if (!added) { toast(skipped ? `没有新产品（${skipped} 条重复跳过）` : "没有可导入的产品"); return; }
+      saveState(); renderProducts();
+      toast(`已导入 ${added} 个产品${skipped ? `，跳过 ${skipped} 条重复` : ""}`);
+    } catch (err) { toast("导入失败，请检查 CSV 格式"); }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
 function renderQuotes() {
   const q = ($("#quoteSearch").value || "").toLowerCase();
   const f = $("#quoteFilter").value;
@@ -4612,6 +4664,8 @@ function init() {
   $("#productSearch").addEventListener("input", renderProducts);
   $("#addProductBtn").addEventListener("click", () => productModal(null));
   $("#exportProductsBtn").addEventListener("click", exportProducts);
+  $("#importProductsBtn")?.addEventListener("click", () => $("#productsImportFile").click());
+  $("#productsImportFile")?.addEventListener("change", (e) => { if (e.target.files[0]) importProductsCsv(e.target.files[0]); e.target.value = ""; });
   $("#colorDictBtn").addEventListener("click", openColorDict);
 
   $("#orderSearch").addEventListener("input", renderOrders);
