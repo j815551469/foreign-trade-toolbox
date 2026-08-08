@@ -100,7 +100,7 @@ node server.js
 - **服务器**：Node.js 内置模块（`http / fs / path / crypto`），**零 npm 依赖**
 - **PDF**：jsPDF 生成 + pdf.js 预览；模板输出经 DOMPurify 消毒（防存储型 XSS）
 - **安全**：PBKDF2-SHA256（60 万次迭代，旧哈希自动迁移）加盐哈希、HMAC 签名令牌（7 天、含密码版本号可即时撤销）、登录/注册/管理接口限流、CSP + 安全响应头、状态文件原子写 + 备份轮转、可选 HTTPS
-- **授权**：ECDSA-P256 签名授权码（公司/席位/到期/机器绑定）+ 首次运行 14 天试用，详见 [docs/COMMERCIALIZATION.md](docs/COMMERCIALIZATION.md)
+- **授权**：ECDSA-P256 签名授权码（公司/席位/到期/机器绑定）+ 首次运行 14 天试用；授权码由授权方离线签发
 
 ## 🔒 数据与安全
 
@@ -117,8 +117,8 @@ node server.js
 
 - 首次运行自动进入 **14 天全功能试用**（默认 3 席位，环境变量 `TRIAL_DAYS` / `TRIAL_SEATS` 可调）；
 - 试用到期后需激活授权：**授权码由 ECDSA-P256 私钥离线签发**（`tools/make-license.js`），绑定机器码、可含席位与到期日；服务器只内置公钥校验，私钥不随产品分发；
-- 激活入口：设置页 → 授权与试用（仅管理员）；到期后管理员仍可登录激活，普通用户被拦截；
-- 签发流程与商用路线见 [docs/COMMERCIALIZATION.md](docs/COMMERCIALIZATION.md)。
+- 激活入口：登录页（免登录）或设置页 → 授权与试用；激活后显示公司名与到期日，到期前 3 天黄字提醒；
+- 到期后管理员仍可登录激活，普通用户被拦截。
 
 ## 🔄 更新
 

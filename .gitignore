@@ -4,13 +4,11 @@ data/
 users.json
 .secret
 
-# 授权签发私钥（绝不上传）
-tools/private.pem
+# 授权签发全套工具（含私钥/exe/签发脚本，仅本机使用，绝不上传 GitHub）
+tools/
 
-# SEA 构建产物与签发输出（exe 91MB 不入库）
-tools/sea-prep.blob
-tools/授权签发工具.exe
-tools/授权码.txt
+# 商用化文档（仅本机）
+docs/COMMERCIALIZATION.md
 
 # Serena 项目文件
 .serena/
