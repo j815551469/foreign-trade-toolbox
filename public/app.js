@@ -5,6 +5,27 @@ const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const esc = (value = "") => String(value).replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
 // 存储型 XSS 消毒（单证模板等用户可编辑 HTML）：用 DOMPurify 清理脚本/事件/危险 URL
 const sanitizeHtml = (html) => (window.DOMPurify ? window.DOMPurify.sanitize(String(html == null ? "" : html)) : String(html == null ? "" : html));
+// 图片压缩：文件 → 等比缩放为 JPEG base64（控制入库体积）
+function resizeImage(file, maxDim, quality, cb) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h); // 透明背景转白
+      ctx.drawImage(img, 0, 0, w, h);
+      cb(canvas.toDataURL("image/jpeg", quality));
+    };
+    img.onerror = () => { toast("图片读取失败"); };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
 const uid = () => "id" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const fmt = (value, digits = 2) => {
   const n = Number(value);
@@ -3795,7 +3816,17 @@ function productModal(id) {
       <label>每箱毛重（kg）<input id="pCartonWeight" type="number" value="${esc(p.cartonWeight ?? "")}"></label>
       <label>每箱数量<input id="pQtyPerCarton" type="number" value="${esc(p.qtyPerCarton ?? "")}"></label>
       <label>供应商<input id="pSupplier" value="${esc(p.supplier || "")}"></label>
-      <label style="grid-column:1/-1">产品图片 URL<input id="pImage" value="${esc(p.image || "")}" placeholder="https://...（可选，产品列表/报价显示缩略图）"></label>
+      <label style="grid-column:1/-1">产品图片
+        <div class="img-field">
+          <img id="pImagePreview" class="prod-img-preview" alt="图片预览"${p.image ? ` src="${esc(p.image)}"` : " style='display:none'"}>
+          <div class="img-field-actions">
+            <input type="file" id="pImageFile" accept="image/*">
+            <button type="button" class="btn ghost" id="pImageRemoveBtn"${p.image ? "" : " style='display:none'"}><i data-lucide="trash-2"></i><span>移除图片</span></button>
+          </div>
+        </div>
+        <span class="hint">上传图片文件（jpg/png），自动压缩后保存在数据库，不占用外部链接。</span>
+        <input type="hidden" id="pImageData" value="${esc(p.image || "")}">
+      </label>
     </div>
     <div class="color-field">
       <div class="color-field-head"><span>价格阶梯（数量 ≥ / 成本 ¥ 每件）</span><button type="button" class="link-btn" id="addPriceTierBtn"><i data-lucide="plus"></i><span>加一档</span></button></div>
@@ -3805,6 +3836,23 @@ function productModal(id) {
     <div class="modal-actions"><button class="btn" id="modalCancelBtn">取消</button><button class="btn primary" id="modalSaveProductBtn" data-id="${id || ""}">保存</button></div></div>`);
   attachHsAutocompletes();
   renderPriceTiers(Array.isArray(p.priceTiers) ? p.priceTiers : []);
+  // 产品图片：文件上传 → 压缩 → 存入数据库（不依赖外链）
+  const imgFile = $("#pImageFile");
+  const imgPrev = $("#pImagePreview");
+  const imgData = $("#pImageData");
+  const imgRemove = $("#pImageRemoveBtn");
+  const setImg = (dataUrl) => {
+    if (imgData) imgData.value = dataUrl || "";
+    if (imgPrev) { if (dataUrl) { imgPrev.src = dataUrl; imgPrev.style.display = ""; } else { imgPrev.removeAttribute("src"); imgPrev.style.display = "none"; } }
+    if (imgRemove) imgRemove.style.display = dataUrl ? "" : "none";
+  };
+  if (imgFile) imgFile.addEventListener("change", () => {
+    const f = imgFile.files && imgFile.files[0];
+    if (!f) return;
+    if (f.size > 8 * 1024 * 1024) { toast("图片过大，请选择 8MB 以内的图片"); imgFile.value = ""; return; }
+    resizeImage(f, 400, 0.8, (dataUrl) => { setImg(dataUrl); toast("图片已就绪，保存产品后生效"); });
+  });
+  if (imgRemove) imgRemove.addEventListener("click", () => { setImg(""); imgFile.value = ""; });
   $("#addPriceTierBtn").addEventListener("click", () => {
     $("#priceTierList").insertAdjacentHTML("beforeend", `<div class="tier-row"><span>数量 ≥</span><input type="number" class="pt-qty" placeholder="5000" style="width:90px"><span>成本 ¥</span><input type="number" class="pt-price" step="0.01" placeholder="11" style="width:90px"><button type="button" class="icon-btn js-del-tier" title="删除"><i data-lucide="trash-2"></i></button></div>`);
     refreshIcons();
@@ -3878,7 +3926,7 @@ function saveProductFromModal(id) {
     cartonL: Number($("#pCartonL").value) || 0, cartonW: Number($("#pCartonW").value) || 0, cartonH: Number($("#pCartonH").value) || 0,
     cartonWeight: Number($("#pCartonWeight").value) || 0, qtyPerCarton: Number($("#pQtyPerCarton").value) || 0,
     supplier: $("#pSupplier").value.trim(), notes: $("#pNotes").value.trim(),
-    image: ($("#pImage") && $("#pImage").value.trim()) || "",
+    image: ($("#pImageData") && $("#pImageData").value.trim()) || "",
     priceTiers: $$("#priceTierList .tier-row").map((tr) => ({ qty: Number(tr.querySelector(".pt-qty")?.value) || 0, price: Number(tr.querySelector(".pt-price")?.value) || 0 })).filter((t) => t.qty > 0 && t.price > 0).sort((a, b) => a.qty - b.qty)
   };
   if (!data.model && !data.name) { toast("请填写型号或产品名称"); return; }

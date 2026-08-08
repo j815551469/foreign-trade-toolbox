@@ -373,6 +373,10 @@ textarea { resize: vertical; min-height: 90px; line-height: 1.55; }
 .biz-bar-label { font-size: 12px; color: #64748b; margin-top: 6px; }
 .biz-bar-val { font-size: 11px; color: #94a3b8; margin-top: 2px; }
 .prod-thumb { width: 36px; height: 36px; object-fit: cover; border-radius: 6px; vertical-align: middle; margin-right: 8px; border: 1px solid #eef2f7; }
+.img-field { display: flex; align-items: center; gap: 12px; }
+.prod-img-preview { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; border: 1px solid #eef2f7; background: #f8fafc; }
+.img-field-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.img-field-actions input[type="file"] { font-size: 12px; }
 .lic-machine { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #475569; }
 .lic-machine span { white-space: nowrap; }
 .lic-machine code { font-family: Consolas, monospace; font-size: 12px; background: #f1f5f9; padding: 3px 8px; border-radius: 4px; word-break: break-all; flex: 1; }
