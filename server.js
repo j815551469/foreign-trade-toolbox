@@ -443,6 +443,18 @@ const handler = (req, res) => {
       });
       return;
     }
+    if (pathname === "/api/license/cancel" && method === "POST") {
+      // 取消授权（仅管理员）：删除授权码，回到试用模式
+      const me = authUser(req);
+      if (!me) { json(res, 401, { error: "未登录" }); return; }
+      if (!isAdmin(me.username)) { json(res, 403, { error: "需要管理员权限" }); return; }
+      const rl = rateLimit(rlKey("license"), "license");
+      if (!rl.ok) { json(res, 429, { error: "操作过于频繁" }); return; }
+      const r = license.cancel(DATA_DIR);
+      audit("license.cancel", `by=${me.username}`);
+      json(res, r.ok ? 200 : 400, r.ok ? { ok: true, ...r } : { error: r.error });
+      return;
+    }
 
     if (pathname === "/api/register" && method === "POST") {
       const rl = rateLimit(rlKey("register"), "register");

@@ -137,4 +137,15 @@ function activate(dataDir, key) {
   }
 }
 
-module.exports = { machineId, parseLicenseKey, status, isLicensed, activate, TRIAL_DAYS, TRIAL_SEATS, PUBLIC_KEY };
+// 取消授权：删除已激活授权码，回到试用模式
+function cancel(dataDir) {
+  try {
+    const file = path.join(dataDir, LICENSE_FILENAME);
+    if (fs.existsSync(file)) fs.rmSync(file);
+    return { ok: true, ...status(dataDir) };
+  } catch (e) {
+    return { ok: false, error: "取消失败" };
+  }
+}
+
+module.exports = { machineId, parseLicenseKey, status, isLicensed, activate, cancel, TRIAL_DAYS, TRIAL_SEATS, PUBLIC_KEY };

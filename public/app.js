@@ -3259,10 +3259,29 @@ async function renderLicenseStatus() {
     }
     const row = $("#licenseActivateRow");
     if (row) row.style.display = auth.role === "admin" ? "" : "none";
+    // 取消授权按钮：仅管理员且已授权时显示
+    const cancelBtn = $("#cancelLicenseBtn");
+    if (cancelBtn) cancelBtn.style.display = (auth.role === "admin" && d.mode === "licensed") ? "" : "none";
     refreshIcons();
   } catch (e) {
     statusEl.innerHTML = `<span class="cell-sub">未通过服务器访问（本机模式，无授权限制）</span>`;
   }
+}
+
+// 取消授权（仅管理员）：删除授权码回到试用模式
+async function cancelLicense() {
+  if (!confirm("确定取消当前授权吗？系统将回到试用模式，普通用户可能无法登录；重新激活需输入新的授权码。")) return;
+  try {
+    const r = await fetch("api/license/cancel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + auth.token }
+    });
+    const d = await r.json();
+    if (!r.ok) { toast(d.error || "取消失败"); return; }
+    toast("授权已取消，系统回到试用模式");
+    await renderLicenseStatus();
+    await updateAuthLicenseHint();
+  } catch (e) { toast("无法连接服务器"); }
 }
 
 // 复制「公司名称 + 机器码」：客户发给授权方用于签发对应授权码
@@ -4711,6 +4730,7 @@ function init() {
   });
   // 授权/试用（设置页激活，仅管理员可见）
   $("#activateLicenseBtn")?.addEventListener("click", activateLicense);
+  $("#cancelLicenseBtn")?.addEventListener("click", cancelLicense);
   $("#copyCompanyMachineBtn")?.addEventListener("click", copyCompanyMachine);
 
   // 登录/注册
