@@ -730,6 +730,63 @@ const handler = (req, res) => {
       return;
     }
 
+    // ---- 全量备份 / 恢复（仅管理员）----
+    if (pathname === "/api/admin/backup" && method === "GET") {
+      const me = authUser(req);
+      if (!me) { json(res, 401, { error: "未登录" }); return; }
+      if (!isAdmin(me.username)) { json(res, 403, { error: "需要管理员权限" }); return; }
+      const rl = rateLimit(rlKey("admin"), "admin");
+      if (!rl.ok) { json(res, 429, { error: "操作过于频繁" }); return; }
+      const users = loadUsers();
+      const states = {};
+      if (USE_SQLITE) {
+        const rows = DB.prepare("SELECT username, data FROM user_state").all();
+        for (const r of rows) states[r.username] = String(r.data);
+      } else {
+        const files = fs.readdirSync(DATA_DIR).filter((f) => f.endsWith(".json") && f !== "users.json" && !f.includes(".bak") && !f.startsWith("."));
+        for (const f of files) { try { states[f.replace(/\.json$/, "")] = fs.readFileSync(path.join(DATA_DIR, f), "utf8"); } catch (e) { /* ignore */ } }
+      }
+      let licenseKey = "", registerKey = "";
+      try { licenseKey = fs.readFileSync(path.join(DATA_DIR, "license.txt"), "utf8").trim(); } catch (e) { /* ignore */ }
+      try { registerKey = fs.readFileSync(path.join(DATA_DIR, "register-key.txt"), "utf8").trim(); } catch (e) { /* ignore */ }
+      const backup = { app: "trade-toolbox", version: "v1.2", exportedAt: new Date().toISOString(), users, states, licenseKey, registerKey };
+      audit("admin.backup", `by=${me.username}`);
+      const body = JSON.stringify(backup);
+      res.writeHead(200, withSecurity({ "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Content-Disposition": `attachment; filename="trade-toolbox-backup-${new Date().toISOString().slice(0, 10)}.json"` }));
+      res.end(body);
+      return;
+    }
+    if (pathname === "/api/admin/restore" && method === "POST") {
+      const me = authUser(req);
+      if (!me) { json(res, 401, { error: "未登录" }); return; }
+      if (!isAdmin(me.username)) { json(res, 403, { error: "需要管理员权限" }); return; }
+      const rl = rateLimit(rlKey("admin"), "admin");
+      if (!rl.ok) { json(res, 429, { error: "操作过于频繁" }); return; }
+      readBody(req, (body) => {
+        try {
+          const b = JSON.parse(String(body).replace(/^﻿/, "")); // 兼容 BOM
+          if (b.app !== "trade-toolbox" || !b.users || typeof b.users !== "object" || !b.states || typeof b.states !== "object") {
+            json(res, 400, { error: "备份文件格式无效" }); return;
+          }
+          if (USE_SQLITE) { DB.prepare("DELETE FROM users").run(); }
+          saveUsers(b.users);
+          if (USE_SQLITE) { DB.prepare("DELETE FROM user_state").run(); }
+          const up = USE_SQLITE ? DB.prepare("INSERT OR REPLACE INTO user_state (username, data, updated_at) VALUES (?,?,?)") : null;
+          for (const [u, data] of Object.entries(b.states)) {
+            if (USE_SQLITE) up.run(u, String(data), Date.now());
+            else { try { fs.writeFileSync(userStateFilePath(u), String(data)); } catch (e) { /* ignore */ } }
+          }
+          const licFile = path.join(DATA_DIR, "license.txt");
+          if (b.licenseKey) { try { fs.writeFileSync(licFile, b.licenseKey); } catch (e) { /* ignore */ } }
+          else { try { fs.rmSync(licFile, { force: true }); } catch (e) { /* ignore */ } }
+          if (b.registerKey) { try { fs.writeFileSync(path.join(DATA_DIR, "register-key.txt"), b.registerKey); } catch (e) { /* ignore */ } }
+          audit("admin.restore", `by=${me.username} 恢复 ${Object.keys(b.users).length} 账号`);
+          json(res, 200, { ok: true, restored: Object.keys(b.users).length });
+        } catch (e) { json(res, 500, { error: "恢复失败：" + (e.message || "备份文件损坏") }); }
+      });
+      return;
+    }
+
     // ---- 静态文件 ----
     if (pathname === "/") pathname = "/index.html";
     let filePath = path.join(ROOT, pathname);

@@ -3212,9 +3212,11 @@ function renderSettings() {
     umPanel.style.display = auth.role === "admin" ? "" : "none";
     if (auth.role === "admin") renderUserManagement();
   }
-  // 清空初始演示数据仅管理员可见
-  const cdBtn = $("#clearDemoBtn");
-  if (cdBtn) cdBtn.style.display = auth.role === "admin" ? "" : "none";
+  // 管理员专属：清空演示数据 / 备份 / 恢复
+  ["#clearDemoBtn", "#backupDataBtn", "#restoreDataBtn"].forEach((sel) => {
+    const el = $(sel);
+    if (el) el.style.display = auth.role === "admin" ? "" : "none";
+  });
   renderLicenseStatus();
 }
 
@@ -4275,6 +4277,46 @@ async function clearDemoData() {
   } catch (e) { toast("无法连接服务器"); }
 }
 
+// —— 全量备份 / 恢复（仅管理员）——
+async function backupData() {
+  try {
+    const r = await fetch("api/admin/backup", { headers: { Authorization: "Bearer " + auth.token } });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); toast(d.error || "备份失败"); return; }
+    const text = await r.text();
+    const date = new Date().toISOString().slice(0, 10);
+    // 直接下载（不含 BOM，保证恢复可解析）
+    const blob = new Blob([text], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `trade-toolbox-backup-${date}.json`; a.click();
+    URL.revokeObjectURL(url);
+    toast("备份已下载，请妥善保存");
+  } catch (e) { toast("无法连接服务器"); }
+}
+function restoreData(file) {
+  if (!confirm("恢复备份将覆盖当前所有用户数据、账号与授权，不可撤销。确定继续？")) return;
+  const reader = new FileReader();
+  reader.onload = async () => {
+    try {
+      const r = await fetch("api/admin/restore", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + auth.token },
+        body: String(reader.result).replace(/^﻿/, "")
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { toast(d.error || "恢复失败"); return; }
+      toast(`已恢复 ${d.restored || 0} 个账号，请用备份中的管理员账号重新登录`);
+      // 清会话回登录页（恢复后令牌可能失效）
+      sessionEpoch++; saveFailNotified = false;
+      auth = { token: "", username: "" };
+      saveAuth();
+      $("#authScreen")?.classList.add("auth-visible");
+      showAuthLogin();
+    } catch (e) { toast("无法连接服务器"); }
+  };
+  reader.readAsText(file);
+}
+
 // —— Ctrl+K 全局搜索 ——
 function openGlobalSearch() {
   openModal(`
@@ -4719,6 +4761,9 @@ function init() {
   $("#importDataFile").addEventListener("change", (e) => { if (e.target.files[0]) importData(e.target.files[0]); e.target.value = ""; });
   $("#resetDataBtn").addEventListener("click", resetData);
   $("#clearDemoBtn")?.addEventListener("click", clearDemoData);
+  $("#backupDataBtn")?.addEventListener("click", backupData);
+  $("#restoreDataBtn")?.addEventListener("click", () => $("#restoreDataFile").click());
+  $("#restoreDataFile")?.addEventListener("change", (e) => { if (e.target.files[0]) restoreData(e.target.files[0]); e.target.value = ""; });
   // 用户管理（管理员）
   $("#refreshUsersBtn")?.addEventListener("click", renderUserManagement);
   $("#userManageList")?.addEventListener("click", (e) => {
