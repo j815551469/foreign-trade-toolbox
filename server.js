@@ -7,6 +7,7 @@ const https = require("https");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { spawn, spawnSync } = require("child_process");
 const license = require("./license");
 
 const PORT = Number(process.env.PORT || 8080);
@@ -96,6 +97,37 @@ const RATE = {
 const rateBuckets = new Map();
 // 状态写入队列（按用户）：串行化并发保存，避免旧数据覆盖新数据
 const stateWriteQueues = new Map();
+
+// —— HS 编码在线更新（hs-update/ 目录 + Python 管线）——
+const HS_UPDATE_DIR = path.join(__dirname, "hs-update");
+const HS_LAST_UPDATE_FILE = path.join(HS_UPDATE_DIR, "last-update.json");
+// 纯 Node 更新引擎（run-update.js），无需 Python；spawn process.execPath 复用当前 node
+const HS_RUNNER = path.join(HS_UPDATE_DIR, "run-update.js");
+const hsUpdate = {
+  running: false,
+  startedAt: 0,
+  stage: "idle", // idle | starting | fetching | aggregating | building | publishing
+  totalChapters: 0,
+  chaptersDone: 0,
+  currentChapter: "",
+  entries: 0,
+  proc: null,
+  clients: new Set(),
+  finished: false,  // 已收 DONE（成功）
+  settled: false,   // 已收 ERROR/PARTIAL（有明确结论，exit 时不再补 error）
+  stopping: false,  // 用户点了「停止更新」，exit 处理器不再补 error
+};
+// 看门狗：进程已退出但 running 仍为 true 时（理论上 exit 处理器已清），强制复位，防止「更新中」卡死
+setInterval(() => {
+  if (hsUpdate.running && hsUpdate.proc && hsUpdate.proc.exitCode !== null) {
+    hsUpdate.running = false;
+    hsUpdate.proc = null;
+    hsBroadcast("error", { message: "更新进程异常退出，已自动复位，请重新点击「在线更新」" });
+    hsBroadcast("close", {});
+    hsCloseClients();
+    audit("hs.update.watchdog", "reset stuck running flag");
+  }
+}, 30000).unref();
 function rateLimit(key, category) {
   const cfg = RATE[category] || RATE.login;
   const now = Date.now();
@@ -333,9 +365,7 @@ function verifyToken(token) {
 }
 // 鉴权：令牌有效 + 账号存在 + 密码版本匹配 + 授权未到期（非管理员）
 // 授权到期后，非管理员的实时会话立即失效（管理员保留以便激活授权）
-function authUser(req) {
-  const h = req.headers.authorization || "";
-  const token = h.startsWith("Bearer ") ? h.slice(7) : "";
+function authToken(token) {
   const t = verifyToken(token);
   if (!t) return null;
   const users = loadUsers();
@@ -344,6 +374,11 @@ function authUser(req) {
   const role = u.role || "user";
   if (role !== "admin" && license.status(DATA_DIR).mode === "expired") return null;
   return { username: t.username, role, displayName: u.displayName || t.username };
+}
+function authUser(req) {
+  const h = req.headers.authorization || "";
+  const token = h.startsWith("Bearer ") ? h.slice(7) : "";
+  return authToken(token);
 }
 
 // —— 授权 / 试用 ——
@@ -386,6 +421,261 @@ function json(res, code, obj) {
 function plain(res, code, text) {
   res.writeHead(code, withSecurity({ "Content-Type": "text/plain; charset=utf-8" }));
   res.end(text);
+}
+
+// ================== HS 编码在线更新 ==================
+
+function readHsLastUpdate() {
+  try {
+    const d = JSON.parse(fs.readFileSync(HS_LAST_UPDATE_FILE, "utf8"));
+    if (d && typeof d === "object") {
+      return {
+        lastUpdate: d.lastUpdate || null,
+        count: Number(d.count) || 0,
+        added: Number.isFinite(Number(d.added)) ? Number(d.added) : undefined,
+        updated: Number.isFinite(Number(d.updated)) ? Number(d.updated) : undefined,
+        kept: Number.isFinite(Number(d.kept)) ? Number(d.kept) : undefined,
+        okChapters: Number.isFinite(Number(d.okChapters)) ? Number(d.okChapters) : undefined,
+        totalChapters: Number.isFinite(Number(d.totalChapters)) ? Number(d.totalChapters) : undefined,
+        complete: d.complete,
+        missing: d.missing || "",
+      };
+    }
+  } catch (e) { /* 缺失/损坏 → null */ }
+  return { lastUpdate: null, count: 0 };
+}
+
+function hsBroadcast(event, data) {
+  const payload = `event: ${event}\ndata: ${JSON.stringify(data || {})}\n\n`;
+  for (const c of hsUpdate.clients) {
+    try { c.res.write(payload); } catch (e) { hsUpdate.clients.delete(c); }
+  }
+}
+
+function hsCloseClients() {
+  for (const c of hsUpdate.clients) {
+    try {
+      if (c.heartbeat) clearInterval(c.heartbeat);
+      c.res.end();
+    } catch (e) { /* ignore */ }
+  }
+  hsUpdate.clients.clear();
+}
+
+function hsSnapshot() {
+  return {
+    running: hsUpdate.running,
+    stage: hsUpdate.stage,
+    startedAt: hsUpdate.startedAt,
+    totalChapters: hsUpdate.totalChapters,
+    chaptersDone: hsUpdate.chaptersDone,
+    currentChapter: hsUpdate.currentChapter,
+    entries: hsUpdate.entries,
+  };
+}
+
+// Node 更新引擎 stdout 标记解析（见 run-update.js 标记协议）
+const HS_MARKERS = {
+  start: /^===HS_UPDATE_START===$/,
+  fetch: /^===HS_UPDATE_FETCH\s+(\d+)\s*===$/,
+  prog: /^PROGRESS\s+(\d+)\s*\/\s*(\d+)\s+chapter=(\S+)\s+entries=(\d+)\s*$/,
+  aggregate: /^===HS_UPDATE_AGGREGATE===$/,
+  build: /^===HS_UPDATE_BUILD===$/,
+  done: /^===HS_UPDATE_DONE\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.+?)\s*===$/,
+  partial: /^===HS_UPDATE_PARTIAL\s+(\d+)\s+(\d+)\s*===$/,
+  error: /^===HS_UPDATE_ERROR\s+(.+?)\s*===$/,
+};
+
+function hsHandleLine(line) {
+  let m;
+  if (HS_MARKERS.fetch.test(line)) {
+    hsUpdate.totalChapters = Number(line.match(HS_MARKERS.fetch)[1]);
+    hsUpdate.stage = "fetching";
+    hsUpdate.chaptersDone = 0;
+    hsBroadcast("stage", { stage: "fetching", totalChapters: hsUpdate.totalChapters });
+    return;
+  }
+  if ((m = line.match(HS_MARKERS.prog))) {
+    hsUpdate.chaptersDone = Number(m[1]);
+    hsUpdate.totalChapters = Number(m[2]);
+    hsUpdate.currentChapter = m[3];
+    hsUpdate.entries = Number(m[4]);
+    hsBroadcast("progress", {
+      done: hsUpdate.chaptersDone, total: hsUpdate.totalChapters,
+      chapter: m[3], entries: hsUpdate.entries, pct: Math.round(Number(m[1]) * 100 / Number(m[2])),
+    });
+    return;
+  }
+  if (HS_MARKERS.aggregate.test(line)) { hsUpdate.stage = "aggregating"; hsBroadcast("stage", { stage: "aggregating" }); return; }
+  if (HS_MARKERS.build.test(line)) { hsUpdate.stage = "building"; hsBroadcast("stage", { stage: "building" }); return; }
+  if ((m = line.match(HS_MARKERS.done))) {
+    const count = Number(m[1]), added = Number(m[2]), updated = Number(m[3]), kept = Number(m[4]);
+    const okChapters = Number(m[5]), totalChapters = Number(m[6]);
+    const missing = m[7] === "-" ? "" : m[7], lastUpdate = m[8].trim();
+    hsUpdate.finished = true;
+    hsUpdate.settled = true;
+    hsUpdate.stage = "publishing";
+    hsBroadcast("done", { count, added, updated, kept, okChapters, totalChapters, missing, lastUpdate });
+    hsBroadcast("close", {});
+    hsCloseClients();
+    audit("hs.update.done", `count=${count} added=${added} updated=${updated} kept=${kept} ok=${okChapters}/${totalChapters} missing=${missing || '-'} lastUpdate=${lastUpdate}`);
+    return;
+  }
+  if ((m = line.match(HS_MARKERS.partial))) {
+    const newCount = Number(m[1]), oldCount = Number(m[2]);
+    hsUpdate.settled = true;
+    hsBroadcast("error", { message: `抓取不完整（${newCount} 条 < 现有 ${oldCount} 条），未覆盖现有数据，可再次点击「在线更新」续传` });
+    hsBroadcast("close", {});
+    hsCloseClients();
+    audit("hs.update.partial", `new=${newCount} old=${oldCount}`);
+    return;
+  }
+  if ((m = line.match(HS_MARKERS.error))) {
+    hsUpdate.settled = true;
+    hsBroadcast("error", { message: m[1].trim() });
+    hsBroadcast("close", {});
+    hsCloseClients();
+    audit("hs.update.error", m[1].trim());
+    return;
+  }
+  // 普通行 → 转发为 log（每码进度、logger 警告等）
+  hsBroadcast("log", { text: line });
+}
+
+function hsStartUpdate(req, res) {
+  if (hsUpdate.running) { json(res, 200, { started: false, alreadyRunning: true }); return; }
+  const target = path.join(ROOT, "hs-detail.js");
+  // 纯 Node 引擎：复用当前 node.exe（process.execPath），无需 Python
+  const proc = spawn(process.execPath, [HS_RUNNER, "--out", target], {
+    cwd: HS_UPDATE_DIR, stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
+  });
+  hsUpdate.running = true;
+  hsUpdate.startedAt = Date.now();
+  hsUpdate.stage = "starting";
+  hsUpdate.totalChapters = 0;
+  hsUpdate.chaptersDone = 0;
+  hsUpdate.currentChapter = "";
+  hsUpdate.entries = 0;
+  hsUpdate.finished = false;
+  hsUpdate.settled = false;
+  hsUpdate.proc = proc;
+
+  let pending = "";
+  proc.stdout.setEncoding("utf8");
+  proc.stdout.on("data", (chunk) => {
+    pending += chunk;
+    let nl;
+    while ((nl = pending.indexOf("\n")) >= 0) {
+      const line = pending.slice(0, nl).replace(/\r$/, "");
+      pending = pending.slice(nl + 1);
+      hsHandleLine(line);
+    }
+  });
+  proc.stderr.setEncoding("utf8");
+  proc.stderr.on("data", (chunk) => {
+    pending += chunk;
+    let nl;
+    while ((nl = pending.indexOf("\n")) >= 0) {
+      const line = pending.slice(0, nl).replace(/\r$/, "");
+      pending = pending.slice(nl + 1);
+      hsBroadcast("log", { text: line });
+    }
+  });
+  proc.on("exit", (code) => {
+    hsUpdate.proc = null;
+    hsUpdate.running = false;
+    if (hsUpdate.stopping) {
+      // 用户主动停止：hsStopUpdate 已广播 stopped + 清理，这里只清标记
+      hsUpdate.stopping = false;
+      return;
+    }
+    // 先清 flag 再处理尾部行：任何情况下都不允许 running 卡死
+    try { if (pending.trim()) hsHandleLine(pending.trim()); } catch (e) { /* 忽略尾部行解析异常 */ }
+    if (!hsUpdate.finished && !hsUpdate.settled) {
+      hsBroadcast("error", { message: `更新中断（退出码 ${code}），旧数据完好，可重试续传` });
+      hsBroadcast("close", {});
+      hsCloseClients();
+      audit("hs.update.abort", `code=${code}`);
+    }
+  });
+  proc.on("error", (err) => {
+    hsUpdate.proc = null;
+    hsUpdate.running = false;
+    hsBroadcast("error", { message: "无法启动更新进程：" + err.message });
+    hsBroadcast("close", {});
+    hsCloseClients();
+    audit("hs.update.spawn.error", err.message);
+  });
+  hsBroadcast("stage", { stage: "starting" });
+  json(res, 200, { started: true });
+}
+
+// 停止更新：杀进程树 + 删除本次抓取的临时数据（out/*.json + .incomplete）
+// 已发布的数据（hs-detail.js / last-update.json）不受影响 → 不覆盖之前的数据
+function hsStopUpdate(req, res) {
+  if (!hsUpdate.running) { json(res, 200, { ok: false, message: "当前没有正在进行的更新" }); return; }
+  hsUpdate.stopping = true;
+  if (hsUpdate.proc && hsUpdate.proc.pid) {
+    try {
+      if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(hsUpdate.proc.pid), "/T", "/F"], { timeout: 5000 });
+      else try { hsUpdate.proc.kill("SIGKILL"); } catch (e) { /* ignore */ }
+    } catch (e) { /* ignore */ }
+  }
+  // 删除本次抓取的临时数据 + 续传标记 + 聚合产物（已发布的 hs-detail.js 不动）
+  // 进程刚被强杀，Windows 文件句柄可能未立即释放 → 重试删除
+  const sleepSync = (ms) => { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch (e) { /* ignore */ } };
+  try {
+    const outDir = path.join(HS_UPDATE_DIR, "out");
+    if (fs.existsSync(outDir)) {
+      for (const f of fs.readdirSync(outDir)) {
+        if (/^\d{2}\.json$/.test(f) || f === ".incomplete" || f === "_all.json" || f === "_rollup.json") {
+          const p = path.join(outDir, f);
+          for (let attempt = 0; attempt < 8; attempt++) {
+            try { fs.unlinkSync(p); break; } catch (e) {
+              if (attempt < 7) sleepSync(250);
+            }
+          }
+        }
+      }
+    }
+  } catch (e) { /* ignore */ }
+  hsBroadcast("stopped", { message: "更新已停止，本次抓取的数据已删除，未覆盖之前的数据" });
+  hsBroadcast("close", {});
+  hsCloseClients();
+  hsUpdate.running = false;
+  hsUpdate.proc = null;
+  hsUpdate.finished = true;   // 收尾完成，exit 处理器不会再补 error
+  hsUpdate.settled = true;
+  audit("hs.update.stop", "manual stop, partial data cleared");
+  json(res, 200, { ok: true, message: "更新已停止，本次抓取的数据已删除" });
+}
+
+function hsConnectSSE(req, res, me) {
+  res.writeHead(200, withSecurity({
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-store",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+  }));
+  res.write("retry: 3000\n\n");
+  const client = { res, heartbeat: null };
+  const snapshot = hsSnapshot();
+  if (!hsUpdate.running) {
+    res.write(`event: snapshot\ndata: ${JSON.stringify({ ...snapshot, running: false })}\n\n`);
+    res.write(`event: close\ndata: {}\n\n`);
+    res.end();
+    return;
+  }
+  hsUpdate.clients.add(client);
+  res.write(`event: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`);
+  client.heartbeat = setInterval(() => {
+    try { client.res.write(": ping\n\n"); } catch (e) { clearInterval(client.heartbeat); hsUpdate.clients.delete(client); }
+  }, 25000);
+  client.heartbeat.unref && client.heartbeat.unref();
+  req.on("close", () => {
+    if (client.heartbeat) clearInterval(client.heartbeat);
+    hsUpdate.clients.delete(client);
+  });
 }
 
 const MIME = {
@@ -787,6 +1077,49 @@ const handler = (req, res) => {
       return;
     }
 
+    // ---- HS 编码在线更新 ----
+    if (pathname === "/api/hs/meta" && method === "GET") {
+      const lu = readHsLastUpdate();
+      json(res, 200, {
+        lastUpdate: lu.lastUpdate,
+        count: lu.count,
+        added: lu.added, updated: lu.updated, kept: lu.kept,
+        okChapters: lu.okChapters, totalChapters: lu.totalChapters,
+        complete: lu.complete, missing: lu.missing,
+        engine: "node", // 纯 Node 引擎，无需 Python
+        updating: hsUpdate.running,
+        chapters: hsUpdate.totalChapters || null,
+      });
+      return;
+    }
+
+    if (pathname === "/api/hs/update" && method === "POST") {
+      const me = authUser(req);
+      if (!me) { json(res, 401, { error: "未登录" }); return; }
+      if (!isAdmin(me.username)) { json(res, 403, { error: "需要管理员权限" }); return; }
+      const rl = rateLimit(rlKey("hs"), "admin");
+      if (!rl.ok) { json(res, 429, { error: "操作过于频繁" }); return; }
+      hsStartUpdate(req, res);
+      return;
+    }
+
+    if (pathname === "/api/hs/update/stop" && method === "POST") {
+      const me = authUser(req);
+      if (!me) { json(res, 401, { error: "未登录" }); return; }
+      if (!isAdmin(me.username)) { json(res, 403, { error: "需要管理员权限" }); return; }
+      const rl = rateLimit(rlKey("hs"), "admin");
+      if (!rl.ok) { json(res, 429, { error: "操作过于频繁" }); return; }
+      hsStopUpdate(req, res);
+      return;
+    }
+
+    if (pathname === "/api/hs/update/stream" && method === "GET") {
+      const me = authToken(url.searchParams.get("token") || "");
+      if (!me || !isAdmin(me.username)) { plain(res, 403, "Forbidden"); return; }
+      hsConnectSSE(req, res, me);
+      return;
+    }
+
     // ---- 静态文件 ----
     if (pathname === "/") pathname = "/index.html";
     let filePath = path.join(ROOT, pathname);
@@ -797,7 +1130,7 @@ const handler = (req, res) => {
       fs.readFile(filePath, (readErr, data) => {
         if (readErr) { plain(res, 404, "Not Found"); return; }
         const ext = path.extname(filePath).toLowerCase();
-        res.writeHead(200, withSecurity({ "Content-Type": MIME[ext] || "application/octet-stream", "Cache-Control": "no-cache" }));
+        res.writeHead(200, withSecurity({ "Content-Type": MIME[ext] || "application/octet-stream", "Cache-Control": "no-store" }));
         res.end(data);
       });
     });
@@ -847,6 +1180,13 @@ listener.listen(PORT, HOST, () => {
 });
 
 function shutdown() {
+  // 若 HS 更新 Python 进程存活，先杀进程树（win32 下 taskkill /T 覆盖孙进程 fetch_all）
+  if (hsUpdate.proc && hsUpdate.proc.pid) {
+    try {
+      if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(hsUpdate.proc.pid), "/T", "/F"], { timeout: 5000 });
+      else try { hsUpdate.proc.kill("SIGKILL"); } catch (e) { /* ignore */ }
+    } catch (e) { /* ignore */ }
+  }
   try { listener.close(() => process.exit(0)); } catch (e) { process.exit(0); }
 }
 process.on("SIGINT", shutdown);

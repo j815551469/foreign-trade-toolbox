@@ -776,3 +776,10 @@ textarea { resize: vertical; min-height: 90px; line-height: 1.55; }
 .auth-license-result { margin-top: 8px; font-size: 13px; text-align: center; line-height: 1.6; }
 .auth-license-result .ok { color: #16a34a; }
 .auth-license-result .err { color: #dc2626; }
+
+/* —— HS 编码在线更新 —— */
+.spin { animation: hs-spin 1s linear infinite; display: inline-block; }
+@keyframes hs-spin { to { transform: rotate(360deg); } }
+.hs-progress { height: 10px; background: #e5e7eb; border-radius: 6px; overflow: hidden; }
+.hs-progress-fill { height: 100%; background: #2563eb; border-radius: 6px; transition: width .3s ease; }
+.hs-upd-log { margin-top: 8px; max-height: 120px; overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: #6b7280; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px; white-space: pre-wrap; word-break: break-all; }

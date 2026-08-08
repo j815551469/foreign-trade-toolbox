@@ -71,32 +71,7 @@ const TRADE_DATA = {
     { id: "o3", poNo: "PO-20260804", clientId: "c3", clientName: "Gulf Trade Co.", product: "自动宠物喂食器", qty: 1200, amount: 26400, currency: "USD", status: "样品确认中", incoterm: "EXW", payment: "T/T", orderDate: "2026-08-04", deliveryDate: "2026-09-05", port: "宁波 → 杰贝阿里", tracking: "", notes: "样品已寄，等待确认" }
   ],
 
-  hsCodes: [
-    { code: "9405.42.90", code6: "9405.42", name: "其他电灯及照明装置（LED灯条、灯具等）", category: "电子照明", keywords: "LED 灯条 灯具 照明", rebate: "13%", supervision: "以海关监管条件为准", inspection: "以海关检验检疫类别为准", notes: "多数国家需 CE/UL/FCC 认证；LED灯条常见归类，申报前请复核", source: "海关税则参考" },
-    { code: "8507.60.00", code6: "8507.60", name: "锂离子蓄电池", category: "电子电气", keywords: "锂电池 充电宝 电池", rebate: "13%", supervision: "以海关监管条件为准", inspection: "以海关检验检疫类别为准", notes: "空运受限，需 UN38.3 与危包证", source: "海关税则参考" },
-    { code: "8536.69.00", code6: "8536.69", name: "其他插头及插座", category: "电子电气", keywords: "插头 插座 智能插座 接线装置", rebate: "13%", supervision: "以海关监管条件为准", inspection: "以海关检验检疫类别为准", notes: "智能插座常见归入本编码；如按开关申报可为 8536.50.00，以海关归类为准", source: "海关税则参考" },
-    { code: "8536.50.00", code6: "8536.50", name: "其他开关（电压不超过1000V）", category: "电子电气", keywords: "开关 控制器 智能家居", rebate: "13%", supervision: "以海关监管条件为准", inspection: "以海关检验检疫类别为准", notes: "部分市场需强制认证", source: "海关税则参考" },
-    { code: "3924.90.00", code6: "3924.90", name: "其他塑料制餐具及厨房用具", category: "塑料家居", keywords: "塑料制品 宠物用品 收纳", rebate: "13%", supervision: "以海关监管条件为准", inspection: "以海关检验检疫类别为准", notes: "食品接触类商品注意相关测试", source: "海关税则参考" },
-    { code: "6912.00.00", code6: "6912.00", name: "陶瓷制餐具及厨房器具", category: "陶瓷餐具", keywords: "马克杯 陶瓷餐具 杯子", rebate: "13%", supervision: "以海关监管条件为准", inspection: "以海关检验检疫类别为准", notes: "欧美需铅镉迁移测试", source: "海关税则参考" },
-    { code: "7323.93.00", code6: "7323.93", name: "不锈钢制餐桌、厨房或其他家用器具", category: "不锈钢餐厨", keywords: "不锈钢水壶 保温杯 餐具", rebate: "13%", supervision: "以海关监管条件为准", inspection: "以海关检验检疫类别为准", notes: "LFGB/FDA 等食品级认证", source: "海关税则参考" },
-    { code: "6109.10.00", code6: "6109.10", name: "棉制针织或钩编T恤衫、汗衫及其他背心", category: "服装纺织", keywords: "T恤 棉质 服装", rebate: "13%", supervision: "以海关监管条件为准", inspection: "以海关检验检疫类别为准", notes: "注意成分标签与关税配额", source: "海关税则参考" },
-    { code: "9403.60.99", code6: "9403.60", name: "其他木家具", category: "家具", keywords: "折叠书桌 木家具 书桌", rebate: "13%", supervision: "以海关监管条件为准", inspection: "以海关检验检疫类别为准", notes: "折叠书桌按实际材质归类，木制常见归入本编码", source: "海关税则参考" },
-    { code: "9403.20.00", code6: "9403.20", name: "其他金属家具", category: "家具", keywords: "金属家具 铁架桌 办公桌", rebate: "13%", supervision: "以海关监管条件为准", inspection: "以海关检验检疫类别为准", notes: "金属材质书桌/架常见归类", source: "海关税则参考" },
-    { code: "9503.00.00", code6: "9503.00", name: "玩具（玩偶、缩小模型、智力玩具等）", category: "玩具", keywords: "玩具 儿童 模型", rebate: "13%", supervision: "以海关监管条件为准", inspection: "以海关检验检疫类别为准", notes: "EN71/ASTM F963 等安全标准", source: "海关税则参考" },
-    { code: "4202.12.90", code6: "4202.12", name: "以塑料或纺织材料作面的箱、包", category: "箱包", keywords: "背包 旅行包 箱包", rebate: "13%", supervision: "以海关监管条件为准", inspection: "以海关检验检疫类别为准", notes: "面料与配件需提供成分", source: "海关税则参考" },
-    { code: "8517.13.00", code6: "8517.13", name: "智能手机", category: "通讯设备", keywords: "手机 通讯 智能设备", rebate: "13%", supervision: "以海关监管条件为准", inspection: "以海关检验检疫类别为准", notes: "射频认证复杂，建议专业清关", source: "海关税则参考" },
-    { code: "8471.30.00", code6: "8471.30", name: "便携式自动数据处理设备", category: "电脑设备", keywords: "平板 笔记本 电脑", rebate: "13%", supervision: "以海关监管条件为准", inspection: "以海关检验检疫类别为准", notes: "部分国家需能效与 EMC 认证", source: "海关税则参考" },
-    { code: "8205.59.00", code6: "8205.59", name: "其他手工工具", category: "五金工具", keywords: "工具 五金 手动工具", rebate: "13%", supervision: "以海关监管条件为准", inspection: "以海关检验检疫类别为准", notes: "注意材质与防锈处理", source: "海关税则参考" },
-    { code: "8504.40.90", code6: "8504.40", name: "其他静止式变流器", category: "电子电气", keywords: "电源适配器 充电器 变流器", rebate: "13%", supervision: "以海关监管条件为准", inspection: "以海关检验检疫类别为准", notes: "电源类产品注意认证与能效要求", source: "海关税则参考" },
-    { code: "8544.42.00", code6: "8544.42", name: "装有插头或插座的电缆", category: "电子电气", keywords: "数据线 充电线 电缆", rebate: "13%", supervision: "以海关监管条件为准", inspection: "以海关检验检疫类别为准", notes: "常见 USB 线/电源线归类", source: "海关税则参考" },
-    { code: "8518.30.00", code6: "8518.30", name: "耳机及耳塞", category: "电子电气", keywords: "耳机 耳塞 蓝牙耳机", rebate: "13%", supervision: "以海关监管条件为准", inspection: "以海关检验检疫类别为准", notes: "蓝牙耳机需无线电型号核准", source: "海关税则参考" },
-    { code: "4015.19.00", code6: "4015.19", name: "其他硫化橡胶制手套", category: "劳保用品", keywords: "橡胶手套 劳保手套", rebate: "13%", supervision: "以海关监管条件为准", inspection: "以海关检验检疫类别为准", notes: "一次性/医用需按实际用途确认", source: "海关税则参考" },
-    { code: "4203.21.00", code6: "4203.21", name: "皮革或再生皮革制手套", category: "服装纺织", keywords: "皮手套 皮革手套", rebate: "13%", supervision: "以海关监管条件为准", inspection: "以海关检验检疫类别为准", notes: "注意原产地与材质申报", source: "海关税则参考" },
-    { code: "6505.00.00", code6: "6505.00", name: "针织或钩编帽类", category: "服装纺织", keywords: "帽子 针织帽 棒球帽", rebate: "13%", supervision: "以海关监管条件为准", inspection: "以海关检验检疫类别为准", notes: "棒球帽等按材质归类", source: "海关税则参考" },
-    { code: "7013.49.00", code6: "7013.49", name: "其他玻璃器皿", category: "玻璃制品", keywords: "玻璃杯 玻璃餐具 玻璃器皿", rebate: "13%", supervision: "以海关监管条件为准", inspection: "以海关检验检疫类别为准", notes: "注意易碎包装与铅镉测试", source: "海关税则参考" },
-    { code: "9607.11.00", code6: "9607.11", name: "装有贱金属齿的拉链", category: "五金辅料", keywords: "拉链 服装辅料 金属拉链", rebate: "13%", supervision: "以海关监管条件为准", inspection: "以海关检验检疫类别为准", notes: "服装辅料常见归类", source: "海关税则参考" },
-    { code: "3926.90.90", code6: "3926.90", name: "其他塑料制品", category: "塑料制品", keywords: "塑料件 塑料制品 注塑件", rebate: "13%", supervision: "以海关监管条件为准", inspection: "以海关检验检疫类别为准", notes: "未列名塑料制品常见兜底编码", source: "海关税则参考" }
-  ],
+  hsCodes: [], // 已迁移到 hs-detail.js（来自 hscode 项目抓取的 10 位海关编码 + 税率/申报/监管/CIQ）
 
   glossary: [
     { en: "Inquiry", zh: "询盘", category: "开发客户", example: "We received your inquiry from Alibaba." },

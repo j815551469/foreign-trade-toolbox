@@ -60,6 +60,8 @@ const TPL_C = "#1f3a5f";
 const STORE_KEY = "tradeToolboxV1";
 // 单证模板版本：版本升级时重建默认模板（丢弃旧版 localStorage 里的模板），保证用户拿到最新专业版
 const DOC_TPL_VERSION = 3;
+// HS 编码数据源版本：1=旧 data.js 24 条自定义 + 国务院 8 位 hs-full.js；2=hsbianma 10 位 HS_DETAIL（trade-toolbox 内置税则库已迁移到 hs-detail.js）
+const HS_SCHEMA_VERSION = 2;
 const defaultRates = () => Object.fromEntries(TRADE_DATA.currencies.map((c) => [c.code, c.rate]));
 // 给内置演示数据打上 _demo 标记（管理员"清空初始演示数据"按此识别，只删演示、绝不删用户自建数据）
 const markDemo = (arr) => JSON.parse(JSON.stringify(arr || [])).map((x) => ({ ...x, _demo: true }));
@@ -159,7 +161,7 @@ function normalizeState(raw) {
     products: normalizeProducts(Array.isArray(s.products) ? s.products : base.products),
     orders: normalizeOrders(Array.isArray(s.orders) ? s.orders : base.orders),
     colorDict: Array.isArray(s.colorDict) && s.colorDict.length ? s.colorDict : base.colorDict,
-    hsCodes: ensureHsIds(Array.isArray(s.hsCodes) ? s.hsCodes : base.hsCodes),
+    hsCodes: ensureHsIds(migrateHsCodes(s.hsCodes, s.hsSchemaVersion)),
     logisticsItems: normalizeLogistics(Array.isArray(s.logisticsItems) ? s.logisticsItems : base.logisticsItems),
     logisticsRates: Array.isArray(s.logisticsRates) && s.logisticsRates.length ? s.logisticsRates : base.logisticsRates,
     containers: normalizeContainers(Array.isArray(s.containers) && s.containers.length ? s.containers : base.containers),
@@ -173,8 +175,22 @@ function normalizeState(raw) {
     docHistory: Array.isArray(s.docHistory) ? s.docHistory : [],
     ratesUpdatedAt: s.ratesUpdatedAt || 0,
     lastQuoteCalc: s.lastQuoteCalc || null,
-    lastLogistics: s.lastLogistics || null
+    lastLogistics: s.lastLogistics || null,
+    hsSchemaVersion: HS_SCHEMA_VERSION
   };
+}
+
+// 旧版（hsSchemaVersion=1）localStorage 里的 state.hsCodes 是从 data.js 同步下来的 24 条国务院 8 位编码，
+// 已经被 [hs-detail.js](F:/CodexWork/trade-toolbox/hs-detail.js) 的 HS_DETAIL（6967 条 hsbianma 10 位 + 完整税率/申报/CIQ）
+// 完整覆盖；旧 schema 在 hsAll() 里又因为优先级最高而遮住新数据。版本号不匹配时清空，让内置税则库生效。
+function migrateHsCodes(list, storedVersion) {
+  if ((storedVersion || 0) >= HS_SCHEMA_VERSION) {
+    // 已是新 schema，原样保留用户的自定义条目
+    return Array.isArray(list) ? list : [];
+  }
+  // 旧 schema：丢弃旧条目；用户当前若有真实自定义 HS 编码，请在新版本下重新添加
+  console.info(`[trade-toolbox] 检测到旧版 HS 编码数据（schema v${storedVersion || 0}），已自动清空并切换到 hsbianma 10 位内置税则库（v${HS_SCHEMA_VERSION}）`);
+  return [];
 }
 
 let state;
@@ -293,6 +309,7 @@ function enterApp() {
   go(sectionMeta[initial] ? initial : "dashboard");
   if (auth.username) toast(`已登录：${auth.username}`);
   renderSettings();
+  refreshHsMeta(); // 无服务器（file://）时自动降级为禁用
 }
 
 function showAuthLogin() {
@@ -4324,20 +4341,369 @@ function saveOrderFromModal(id) {
   toast("订单已保存");
 }
 
+// ================== HS 编码在线更新 ==================
+const hsUpd = { es: null, active: false, done: false, stage: "", stageText: "", total: 0, doneN: 0, chapter: "", entries: 0, message: "", startedAt: 0, lastProgressAt: 0 };
+
+function hsAuthToken() {
+  return auth && auth.token ? encodeURIComponent(auth.token) : "";
+}
+
+// 更新按钮状态（用 DOM 方法避免直接 set innerHTML）
+function setHsButton(state) {
+  const btn = $("#hsUpdateBtn");
+  if (!btn) return;
+  const icon = btn.querySelector("i");
+  const label = btn.querySelector("span");
+  const map = {
+    idle: { icon: "refresh-cw", text: "在线更新", spin: false },
+    starting: { icon: "loader-2", text: "正在启动…", spin: true },
+    updating: { icon: "loader-2", text: "更新中…", spin: true },
+  };
+  const s = map[state] || map.idle;
+  if (icon) { icon.setAttribute("data-lucide", s.icon); icon.classList.toggle("spin", s.spin); }
+  if (label) label.textContent = s.text;
+  refreshIcons();
+}
+
+// HS 区顶部「更新进行中」横幅：刷新/关闭后一眼可见，点击直达进度
+function showHsUpdateBanner() {
+  const panel = document.querySelector("#section-hs .panel");
+  if (!panel) return;
+  let banner = document.getElementById("hsUpdateBanner");
+  if (!banner) {
+    banner = document.createElement("div");
+    banner.id = "hsUpdateBanner";
+    banner.style.cssText = "display:flex;align-items:center;gap:8px;padding:10px 12px;margin-bottom:10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;color:#1d4ed8;cursor:pointer;font-size:13px;";
+    banner.addEventListener("click", startHsUpdate);
+    panel.insertBefore(banner, panel.firstChild);
+  }
+  const pct = (hsUpd.total && hsUpd.doneN) ? `（${hsUpd.doneN}/${hsUpd.total} 章）` : "";
+  banner.textContent = "";
+  const icon = document.createElement("i");
+  icon.setAttribute("data-lucide", "loader-2");
+  icon.className = "spin";
+  const text = document.createElement("span");
+  text.textContent = `HS 编码更新进行中${pct}，点击查看进度`;
+  banner.appendChild(icon);
+  banner.appendChild(text);
+  refreshIcons();
+}
+function hideHsUpdateBanner() {
+  const b = document.getElementById("hsUpdateBanner");
+  if (b) b.remove();
+}
+
+// 页面加载时拉取元信息：上次更新时间 + 是否更新中（引擎为纯 Node，始终可用）
+async function refreshHsMeta() {
+  const btn = $("#hsUpdateBtn");
+  const label = $("#hsUpdateTime");
+  if (!btn) return;
+  try {
+    const r = await fetch("api/hs/meta", { cache: "no-store" });
+    if (!r.ok) throw new Error("bad status");
+    const m = await r.json();
+    if (label) {
+      // 更新概况：上次更新 + 条数 + 新增/更新/保留 + 覆盖率
+      let t = m.lastUpdate ? `上次更新：${m.lastUpdate}` : "上次更新：--";
+      if (m.count) t += ` · 共 ${m.count} 条`;
+      if (m.added !== undefined && m.updated !== undefined && m.kept !== undefined) {
+        t += ` · 新增${m.added} 更新${m.updated} 保留${m.kept}`;
+      }
+      if (m.okChapters !== undefined && m.totalChapters !== undefined) {
+        t += ` · ${m.complete ? "完整" : m.okChapters + "/" + m.totalChapters + "章"}`;
+      }
+      label.textContent = t;
+    }
+    setHsButton(m.updating ? "updating" : "idle");
+    if (m.updating) showHsUpdateBanner(); else hideHsUpdateBanner();
+  } catch (err) {
+    // 本地模式（file://）或未连接服务器
+    btn.disabled = true;
+    btn.title = "在线更新需通过服务器访问";
+    if (label) label.textContent = "本地模式，在线更新不可用";
+  }
+}
+
+async function startHsUpdate() {
+  if (hsUpd.active && hsUpd.es) { openHsProgressModal(); return; }
+  const btn = $("#hsUpdateBtn");
+  if (btn) { btn.disabled = true; setHsButton("starting"); }
+  try {
+    const r = await fetch("api/hs/update", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + auth.token } });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { hsFail(d.error || ("更新失败（" + r.status + "）")); return; }
+    hsUpd.active = true;
+    setHsButton("updating"); // 模态框关闭后，按钮仍显示「更新中…」，点击可重开进度
+    openHsProgressModal();
+    connectHsStream();
+  } catch (err) {
+    hsFail("无法连接服务器");
+  }
+}
+
+// 停止更新：删本次抓取数据、保留之前的数据
+async function stopHsUpdate() {
+  const stopBtn = $("#hsUpdStopBtn");
+  if (stopBtn) { stopBtn.disabled = true; stopBtn.textContent = "正在停止…"; }
+  try {
+    const r = await fetch("api/hs/update/stop", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + auth.token } });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { if (stopBtn) { stopBtn.disabled = false; stopBtn.textContent = "停止更新"; } hsFail(d.error || ("停止失败（" + r.status + "）")); return; }
+    // 服务端会广播 stopped 事件，前端在该事件里收尾
+  } catch (err) {
+    if (stopBtn) { stopBtn.disabled = false; stopBtn.textContent = "停止更新"; }
+    hsFail("无法连接服务器");
+  }
+}
+
+function openHsProgressModal() {
+  openModal(`
+    <div class="modal" style="max-width:560px"><div class="modal-head"><h3>HS 编码在线更新</h3><button class="icon-btn" id="modalCloseBtn"><i data-lucide="x"></i></button></div>
+      <div style="padding:16px 20px">
+        <div class="hs-progress"><div class="hs-progress-fill" id="hsUpdBar" style="width:0%"></div></div>
+        <div style="margin:10px 0 4px"><strong id="hsUpdStage">准备中…</strong></div>
+        <div id="hsUpdDetail" class="cell-sub" style="min-height:18px"></div>
+        <div id="hsUpdEta" class="cell-sub" style="min-height:16px;margin-top:4px"></div>
+        <div id="hsUpdLog" class="hs-upd-log"></div>
+        <div id="hsUpdDone" style="margin-top:8px;color:#188038;font-weight:600"></div>
+        <div id="hsUpdErr" style="margin-top:8px;color:#c00;font-weight:600"></div>
+        <div id="hsUpdDoneBar" style="margin-top:10px;display:none;align-items:center;gap:10px">
+          <button class="btn primary" id="hsUpdRefreshBtn">立即刷新查看新数据</button>
+          <span id="hsUpdCountdownText" class="cell-sub"></span>
+        </div>
+        <div style="margin-top:12px"><button class="btn danger" id="hsUpdStopBtn" style="display:none">停止更新</button></div>
+        <div class="cell-sub" style="margin-top:10px;line-height:1.6">⏱ 预计 40–60 分钟（受目标网站限速影响）。可关闭此窗口，更新在服务器后台继续；「停止更新」会删除本次抓取的数据、保留之前的数据。</div>
+      </div>
+    </div>`);
+  // 复用已有连接时，从内存快照恢复渲染
+  if (hsUpd.stage) { const s = $("#hsUpdStage"); if (s) s.textContent = hsUpd.stageText || "更新中…"; }
+  renderHsProgress({ done: hsUpd.doneN, total: hsUpd.total, chapter: hsUpd.chapter, entries: hsUpd.entries });
+  // 停止按钮：更新进行中显示，点击确认后停止
+  const stopBtn = $("#hsUpdStopBtn");
+  if (stopBtn) {
+    stopBtn.disabled = false;
+    stopBtn.textContent = "停止更新";
+    if (hsUpd.active && !hsUpd.done) stopBtn.style.display = "inline-block";
+    else stopBtn.style.display = "none";
+    stopBtn.onclick = () => {
+      if (!confirm("确定停止更新？将删除本次已抓取的数据，并保留之前已发布的数据（不会覆盖）。")) return;
+      stopHsUpdate();
+    };
+  }
+}
+
+function connectHsStream() {
+  if (hsUpd.es && (hsUpd.es.readyState === 0 || hsUpd.es.readyState === 1)) return; // 已连接/连接中
+  const es = new EventSource("api/hs/update/stream?token=" + hsAuthToken());
+  hsUpd.es = es;
+
+  es.addEventListener("snapshot", (e) => {
+    const d = JSON.parse(e.data || "{}");
+    hsUpd.active = true;
+    if (!d.running) { hsFail("更新已结束，请刷新页面查看新数据"); return; }
+    if (d.startedAt) hsUpd.startedAt = d.startedAt;
+    renderHsProgress({ done: d.chaptersDone, total: d.totalChapters, chapter: d.currentChapter, entries: d.entries });
+    showHsUpdateBanner();
+  });
+
+  es.addEventListener("stage", (e) => {
+    const d = JSON.parse(e.data || "{}");
+    const map = { starting: "正在启动…", fetching: "正在抓取章节数据…", aggregating: "正在聚合数据…", building: "正在生成文件…", publishing: "正在发布…" };
+    hsUpd.stage = d.stage;
+    hsUpd.stageText = map[d.stage] || "更新中…";
+    const el = $("#hsUpdStage");
+    if (el) el.textContent = hsUpd.stageText;
+    if (d.totalChapters) hsUpd.total = d.totalChapters;
+    if (d.stage !== "fetching") { const bar = $("#hsUpdBar"); if (bar && d.stage !== "starting") bar.style.width = "100%"; }
+  });
+
+  es.addEventListener("progress", (e) => {
+    const d = JSON.parse(e.data || "{}");
+    hsUpd.doneN = d.done; hsUpd.total = d.total; hsUpd.chapter = d.chapter; hsUpd.entries = d.entries;
+    renderHsProgress(d);
+    showHsUpdateBanner();
+  });
+
+  es.addEventListener("log", (e) => {
+    const d = JSON.parse(e.data || "{}");
+    const text = d.text || "";
+    // 降噪：跳过逐码进度 / 单条失败 / 空章节等刷屏行，保留章节级信息
+    if (/Chapter \d+: \d+\/\d+ codes/.test(text)) return;
+    if (/failed after retries/.test(text)) return;
+    if (/no codes found/.test(text)) return;
+    appendHsLog(text);
+  });
+
+  es.addEventListener("done", (e) => {
+    const d = JSON.parse(e.data || "{}");
+    hsDone(d.count, d.lastUpdate, d.added, d.updated, d.kept, d.okChapters, d.totalChapters, d.missing);
+  });
+
+  es.addEventListener("error", (e) => {
+    // 服务端 error 事件带 data；传输层错误走 onerror
+    if (e.data) { const d = JSON.parse(e.data || "{}"); hsFail(d.message || "更新失败"); }
+  });
+
+  es.addEventListener("close", () => {
+    if (hsUpd.es) { try { hsUpd.es.close(); } catch (err) { /* ignore */ } hsUpd.es = null; }
+  });
+
+  es.addEventListener("stopped", (e) => {
+    const d = JSON.parse(e.data || "{}");
+    const err = $("#hsUpdErr");
+    if (err) err.textContent = "⏹ " + (d.message || "更新已停止，本次抓取的数据已删除");
+    const stage = $("#hsUpdStage");
+    if (stage) stage.textContent = "已停止";
+    const stopBtn = $("#hsUpdStopBtn");
+    if (stopBtn) { stopBtn.style.display = "none"; }
+    if (hsUpd.es) { try { hsUpd.es.close(); } catch (x) { /* ignore */ } hsUpd.es = null; }
+    hideHsUpdateBanner();
+    setHsButton("idle");
+  });
+
+  es.onerror = () => {
+    if (es.readyState === EventSource.CLOSED && !hsUpd.done) {
+      hsFail("更新连接中断，更新仍在服务器后台继续，可稍后重新打开查看");
+    }
+  };
+}
+
+function renderHsProgress(d) {
+  if (!d) return;
+  const done = d.done || 0, total = d.total || 0;
+  const pct = total ? Math.round(done * 100 / total) : 0;
+  hsUpd.doneN = done; hsUpd.total = total; hsUpd.chapter = d.chapter || ""; hsUpd.entries = d.entries || 0;
+  hsUpd.lastProgressAt = Date.now();
+  const bar = $("#hsUpdBar");
+  if (bar && total) bar.style.width = Math.min(100, pct) + "%";
+  const stage = $("#hsUpdStage");
+  if (stage && total) stage.textContent = `正在抓取第 ${done}/${total} 章…`;
+  const detail = $("#hsUpdDetail");
+  if (detail) detail.textContent = `${d.chapter ? "第 " + d.chapter + " 章" : ""}${d.entries ? " · 已入库 " + d.entries + " 条" : ""}`.trim();
+  // 耗时 + 预计剩余（证明在推进；基于已跑时长按完成比例外推）
+  const etaEl = $("#hsUpdEta");
+  if (etaEl && total && done > 0) {
+    const elapsed = Date.now() - (hsUpd.startedAt || Date.now());
+    const mins = Math.max(1, Math.round(elapsed / 60000));
+    const remain = Math.max(0, Math.round(elapsed / done * (total - done) / 60000));
+    etaEl.textContent = `已运行约 ${mins} 分钟 · 已完成 ${pct}% · 预计还需 ${remain} 分钟（限速爬取较慢，可关闭页面稍后回来续传）`;
+  }
+}
+
+function appendHsLog(text) {
+  const el = $("#hsUpdLog");
+  if (!el) return;
+  el.textContent += (el.textContent ? "\n" : "") + text;
+  el.scrollTop = el.scrollHeight;
+  if (el.textContent.length > 4000) el.textContent = el.textContent.slice(-4000);
+}
+
+function hsFail(message) {
+  hsUpd.done = false;
+  hsUpd.message = message;
+  const err = $("#hsUpdErr");
+  if (err) err.textContent = "✕ " + message;
+  const stage = $("#hsUpdStage");
+  if (stage && stage.textContent === "准备中…") stage.textContent = "更新失败";
+  const stopBtn = $("#hsUpdStopBtn");
+  if (stopBtn) stopBtn.style.display = "none";
+  if (hsUpd.es) { try { hsUpd.es.close(); } catch (e) { /* ignore */ } hsUpd.es = null; }
+  hideHsUpdateBanner();
+  setHsButton("idle");
+}
+
+function hsDone(count, lastUpdate, added, updated, kept, okChapters, totalChapters, missing) {
+  hsUpd.done = true;
+  const doneEl = $("#hsUpdDone");
+  if (doneEl) {
+    // 结构化更新概况（多行，刷新后可看）
+    const lines = [];
+    lines.push("✓ 更新完成");
+    lines.push(`总条数：${count} · 新增 ${added ?? 0} · 更新 ${updated ?? 0} · 保留 ${kept ?? 0}`);
+    if (okChapters !== undefined && totalChapters !== undefined) {
+      lines.push(`覆盖率：${okChapters}/${totalChapters} 章${okChapters >= totalChapters ? "（完整）" : "（部分）"}`);
+      if (missing) lines.push(`缺章：${missing}`);
+    }
+    lines.push(`更新时间：${lastUpdate || ""}`);
+    if (okChapters !== undefined && totalChapters !== undefined && okChapters < totalChapters) {
+      lines.push("可再次点击「在线更新」续传补齐缺的章节");
+    }
+    doneEl.style.whiteSpace = "pre-line";
+    doneEl.textContent = lines.join("\n");
+  }
+  const bar = $("#hsUpdBar");
+  if (bar) bar.style.width = "100%";
+  const stage = $("#hsUpdStage");
+  if (stage) stage.textContent = "更新完成";
+  if (hsUpd.es) { try { hsUpd.es.close(); } catch (e) { /* ignore */ } hsUpd.es = null; }
+  hideHsUpdateBanner();
+  setHsButton("idle");
+  // 完成后隐藏停止按钮
+  const stopBtn = $("#hsUpdStopBtn");
+  if (stopBtn) stopBtn.style.display = "none";
+  // 完成后不自动刷新：仅显示报告 + 手动刷新按钮，由用户确认后刷新
+  if (hsUpd.__reloadTimer) { clearInterval(hsUpd.__reloadTimer); hsUpd.__reloadTimer = null; }
+  const doneBar = $("#hsUpdDoneBar");
+  const hintEl = $("#hsUpdCountdownText");
+  const refreshBtn = $("#hsUpdRefreshBtn");
+  if (refreshBtn) refreshBtn.onclick = () => location.reload();
+  if (hintEl) hintEl.textContent = "数据已更新，点击「立即刷新」查看新数据";
+  if (doneBar) doneBar.style.display = "flex";
+}
+
 function hsKey(raw) {
-  // 以完整编码字符串去重：中文"章/类"条目（如"第一类"）与带 ex 前缀的海关参考编码
-  // 不会因数字归一化而与正式税号互相覆盖
-  return String(raw || "").trim();
+  // 数字类编码归一化为 10 位字符串（兼容 "0101.21.00.10" / "0101210010" / "0101.2100" 输入）
+  // 非数字条目（"第一类" 等章节）保留原样
+  const s = String(raw || "").trim();
+  const digits = s.replace(/\D/g, "");
+  if (digits.length >= 6 && /^\d+$/.test(s.replace(/\D/g, "")) === false) return s;  // 保留非纯数字原样
+  if (digits.length >= 6) return digits.slice(0, 10).padEnd(10, "0");
+  return s;
+}
+
+function enrichHsDetail(h) {
+  // 把 hsbianma 原始结构 (tax_info / supervisions 数组) 展平到 app.js 老式字段，便于表格列直接渲染
+  const code = String(h.code || "").replace(/\D/g, "").padEnd(10, "0").slice(0, 10);
+  const ti = h.tax_info || {};
+  return {
+    id: h.id,
+    code,
+    code6: code.slice(0, 4) + "." + code.slice(4, 6),
+    chapter: h.chapter || code.slice(0, 2),
+    name: h.name || "",
+    category: h.category || "海关编码（hsbianma.com）",
+    rebate: ti.ex_rebate || "",
+    supervision: (h.supervisions || []).join(","),
+    inspection: (h.quarantines || []).join(","),
+    keywords: (h.declarations || []).slice(0, 4).join(","),
+    notes: h.notes || "",
+    source: h.source || "hsbianma.com",
+    outdated: !!h.outdated,
+    update_time: h.update_time || "",
+    tax_info: ti,
+    declarations: h.declarations || [],
+    supervisions: h.supervisions || [],
+    quarantines: h.quarantines || [],
+    ciq_codes: h.ciq_codes || {},
+    _source: h._source || "detail"
+  };
 }
 
 function hsAll() {
   const byCode = new Map();
-  state.hsCodes.forEach((h) => byCode.set(hsKey(h.code), h));
-  const full = typeof FULL_HS_CODES !== "undefined" ? FULL_HS_CODES : [];
-  full.forEach((h) => {
-    const key = hsKey(h.code);
-    if (!byCode.has(key)) byCode.set(key, h);
+  // 用户自定义先入（state.hsCodes 每条自带 id，可编辑）
+  (state.hsCodes || []).forEach((h) => {
+    const k = hsKey(h.code);
+    if (k) byCode.set(k, { ...enrichHsDetail(h), id: h.id, _source: "custom" });
   });
+  // HS_DETAIL 增量叠加（已有 key 不覆盖，保留用户自定义）
+  if (typeof HS_DETAIL !== "undefined") {
+    HS_DETAIL.forEach((h) => {
+      const k = hsKey(h.code);
+      if (!k || byCode.has(k)) return;
+      byCode.set(k, enrichHsDetail(h));
+    });
+  }
   return [...byCode.values()];
 }
 
@@ -4347,22 +4713,75 @@ function renderHs() {
   const all = hsAll();
   const list = all.filter((h) => {
     const digits = String(h.code || "").replace(/\D/g, "");
-    const matchQ = !q || `${h.code} ${h.code6 || ""} ${digits} ${h.name || ""} ${h.group || ""} ${h.sub || ""} ${h.category} ${h.keywords || ""} ${h.notes || ""}`.toLowerCase().includes(q);
+    const decl = (h.declarations || []).join(" ");
+    const ciq = Object.entries(h.ciq_codes || {}).map(([k, v]) => `${k} ${v}`).join(" ");
+    const matchQ = !q || `${h.code} ${h.code6 || ""} ${digits} ${h.name || ""} ${h.category} ${h.keywords || ""} ${h.notes || ""} ${decl} ${ciq}`.toLowerCase().includes(q);
     return matchQ && (!f || h.category === f);
   });
   const shown = list.slice(0, 200);
   const info = $("#hsResultInfo");
   if (info) info.textContent = list.length > shown.length ? `共 ${list.length} 条，显示前 ${shown.length} 条，请继续输入关键词缩小范围。` : `共 ${list.length} 条。`;
-  $("#hsTable").innerHTML = `<thead><tr><th>HS 编码</th><th>品名</th><th>品类</th><th>出口退税</th><th>监管 / 检疫</th><th>注意事项</th><th class="actions">操作</th></tr></thead><tbody>${
+  $("#hsTable").innerHTML = `<thead><tr><th>HS 编码</th><th>品名</th><th>出口退税</th><th>增值税率</th><th>监管 / 检疫</th><th class="actions">操作</th></tr></thead><tbody>${
     shown.length ? shown.map((h) => `
-      <tr><td><strong>${esc(h.code)}</strong><div class="cell-sub">${h.code6 ? `国际 6 位：${esc(h.code6)}` : `层级：${h.level || 6} 位`}</div></td>
-      <td><div class="cell-main">${esc(h.name || h.category)}</div>${h.group ? `<div class="cell-sub">${esc(h.group)}${h.sub ? ` · ${esc(h.sub)}` : ""}</div>` : ""}<div class="cell-sub">${esc(h.keywords || "")}</div></td>
-      <td>${esc(h.category)}</td><td>${esc(h.rebate || "-")}</td>
-      <td><div class="cell-sub">监管：${esc(h.supervision || "-")}</div><div class="cell-sub">检疫：${esc(h.inspection || "-")}</div></td>
-      <td style="max-width:260px"><div class="cell-sub">${esc(h.notes || "")}</div><div class="cell-sub">${esc(h.source || "")}</div></td>
-      <td>${h.full ? `<span class="badge teal">完整库</span>` : `<div class="actions"><button class="icon-btn js-edit-hs" data-id="${h.id}" title="编辑"><i data-lucide="pencil"></i></button><button class="icon-btn js-del-hs" data-id="${h.id}" title="删除"><i data-lucide="trash-2"></i></button></div>`}</td></tr>
-    `).join("") : `<tr><td colspan="7" class="empty-state">没有匹配结果</td></tr>`
+      <tr class="js-hs-row" data-code="${esc(h.code)}" style="cursor:pointer">
+        <td><strong>${esc(h.code)}</strong><div class="cell-sub">第${esc(h.chapter)}章 · ${esc(h.code6 || "")}</div></td>
+        <td><div class="cell-main">${esc(h.name || "-")}</div>${h.outdated ? `<div class="cell-sub" style="color:#c00">⚠ 已过期</div>` : ""}${h.ciq_codes && Object.keys(h.ciq_codes).length ? `<div class="cell-sub">CIQ: ${esc(Object.keys(h.ciq_codes)[0])}</div>` : ""}</td>
+        <td>${esc(h.rebate || h.tax_info?.ex_rebate || "-")}</td>
+        <td>${esc(h.tax_info?.vat || "-")}</td>
+        <td><div class="cell-sub">监管：${esc(h.supervision || "-")}</div><div class="cell-sub">检疫：${esc(h.inspection || "-")}</div></td>
+        <td><div class="actions"><button class="icon-btn js-hs-detail" data-code="${esc(h.code)}" title="查看完整详情"><i data-lucide="eye"></i></button>${h._source === "custom" ? `<button class="icon-btn js-edit-hs" data-id="${h.id}" title="编辑"><i data-lucide="pencil"></i></button><button class="icon-btn js-del-hs" data-id="${h.id}" title="删除"><i data-lucide="trash-2"></i></button>` : ""}</div></td>
+      </tr>
+    `).join("") : `<tr><td colspan="6" class="empty-state">没有匹配结果</td></tr>`
   }</tbody>`;
+  refreshIcons();
+}
+
+function showHsDetail(code) {
+  const all = hsAll();
+  const h = all.find((x) => hsKey(x.code) === hsKey(code));
+  if (!h) { toast("未找到该 HS 编码"); return; }
+  const ti = h.tax_info || {};
+  const rows = [
+    ["计量单位", ti.unit || "-"],
+    ["出口税率", ti.export || "-"],
+    ["出口退税税率", ti.ex_rebate || "-"],
+    ["出口暂定税率", ti.ex_provisional || "-"],
+    ["增值税率", ti.vat || "-"],
+    ["进口优惠税率", ti.preferential || "-"],
+    ["进口暂定税率", ti.im_provisional || "-"],
+    ["进口普通税率", ti.import || "-"],
+    ["消费税率", ti.consumption || "-"]
+  ];
+  const legend = (typeof HS_LEGEND !== "undefined") ? HS_LEGEND : {};
+  const sup = (h.supervisions || []).map((c) => `${c}${legend.supervision?.[c] ? " · " + legend.supervision[c] : ""}`).join("  ");
+  const qua = (h.quarantines || []).map((c) => `${c}${legend.quarantine?.[c] ? " · " + legend.quarantine[c] : ""}`).join("  ");
+  const decl = (h.declarations || []).map((d, i) => `${i + 1}. ${d}`).join("<br>");
+  const ciqRows = Object.entries(h.ciq_codes || {}).map(([k, v]) => `<tr><td><code>${esc(k)}</code></td><td>${esc(v)}</td></tr>`).join("");
+  openModal(`
+    <div class="modal" style="max-width:780px"><div class="modal-head"><h3>HS 编码详情 · ${esc(h.code)}</h3><button class="icon-btn" id="modalCloseBtn"><i data-lucide="x"></i></button></div>
+      <div style="padding:14px 18px;max-height:70vh;overflow:auto">
+        <div style="display:flex;gap:8px;align-items:baseline;margin-bottom:10px"><strong style="font-size:18px">${esc(h.name || "-")}</strong>${h.outdated ? `<span class="badge" style="background:#c00;color:#fff">已过期</span>` : ""}<span class="cell-sub">第 ${esc(h.chapter)} 章 · ${esc(h.code6)}</span></div>
+        ${h.update_time ? `<div class="cell-sub" style="margin-bottom:10px">更新：${esc(h.update_time)} · 来源 ${esc(h.source || "hsbianma.com")}</div>` : ""}
+
+        <h4 style="margin:14px 0 6px">税率</h4>
+        <table class="data-table compact"><tbody>${rows.map(([k, v]) => `<tr><td style="width:140px;color:#666">${esc(k)}</td><td><strong>${esc(v)}</strong></td></tr>`).join("")}</tbody></table>
+
+        <h4 style="margin:14px 0 6px">申报要素</h4>
+        <div style="line-height:1.8">${decl || '<span class="cell-sub">无</span>'}</div>
+
+        <h4 style="margin:14px 0 6px">监管条件</h4>
+        <div style="line-height:1.8">${sup || '<span class="cell-sub">无</span>'}</div>
+
+        <h4 style="margin:14px 0 6px">检验检疫类别</h4>
+        <div style="line-height:1.8">${qua || '<span class="cell-sub">无</span>'}</div>
+
+        ${ciqRows ? `<h4 style="margin:14px 0 6px">CIQ 编码</h4><table class="data-table compact"><thead><tr><th>CIQ 13 位</th><th>名称</th></tr></thead><tbody>${ciqRows}</tbody></table>` : ""}
+
+        <div style="margin-top:14px;padding:8px 10px;background:#fff8e6;border-left:3px solid #fa0;color:#664d00;border-radius:4px;font-size:12px">
+          ⚠ 本数据来源于 <a href="https://www.hsbianma.com" target="_blank">hsbianma.com</a>（民间海关参考站），更新滞后海关总署正式公告 1–7 天。<strong>正式报关/归类以海关总署公告为准。</strong>
+        </div>
+      </div>
+    <div class="modal-actions"><button class="btn" id="modalCancelBtn">关闭</button>${h._source === "custom" ? `<button class="btn js-edit-hs" data-id="${h.id}">编辑自定义</button>` : `<button class="btn js-hs-copy" data-code="${esc(h.code)}">复制为自定义</button>`}</div></div>`);
   refreshIcons();
 }
 
@@ -4406,10 +4825,26 @@ function saveHsFromModal(id) {
 }
 
 function exportHs() {
-  const rows = [["code", "code6", "name", "category", "keywords", "rebate", "supervision", "inspection", "notes", "source"]];
-  state.hsCodes.forEach((h) => rows.push([h.code, h.code6, h.name, h.category, h.keywords, h.rebate, h.supervision, h.inspection, h.notes, h.source]));
-  const csv = rows.map((r) => r.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+  // 详细导出完整合并库（内置 + 自定义）：20 列完整税率/申报/监管/检疫/CIQ
+  const headers = ["HS编码", "章节", "品名", "计量单位", "出口税率", "出口退税税率", "出口暂定税率", "增值税率",
+    "进口优惠税率", "进口暂定税率", "进口普通税率", "消费税率", "监管条件", "检验检疫", "申报要素", "CIQ编码",
+    "是否过期", "更新时间", "分类", "来源"];
+  const joinArr = (a) => (Array.isArray(a) ? a.join("；") : "");
+  const joinCiq = (d) => (d && typeof d === "object" ? Object.entries(d).map(([k, v]) => `${k} ${v}`).join("；") : "");
+  const all = hsAll();
+  const rows = all.map((h) => {
+    const ti = h.tax_info || {};
+    return [
+      h.code, h.chapter, h.name, ti.unit, ti.export, ti.ex_rebate, ti.ex_provisional, ti.vat,
+      ti.preferential, ti.im_provisional, ti.import, ti.consumption,
+      joinArr(h.supervisions), joinArr(h.quarantines), joinArr(h.declarations), joinCiq(h.ciq_codes),
+      h.outdated ? "是" : "否", h.update_time, h.category, h.source,
+    ];
+  });
+  // BOM 前缀让 Excel/WPS 直接识别 UTF-8 中文
+  const csv = "﻿" + [headers].concat(rows).map((r) => r.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
   downloadFile("hs-codes.csv", csv, "text/csv;charset=utf-8");
+  toast(`已导出 ${rows.length} 条 HS 编码（完整税率/申报/监管/CIQ）`);
 }
 
 function parseCsvText(text) {
@@ -4437,64 +4872,6 @@ function parseCsvText(text) {
     if (row.some((c) => c.trim() !== "")) rows.push(row);
   }
   return rows;
-}
-
-function importHsCsv(file) {
-  const reader = new FileReader();
-  reader.onload = () => {
-    try {
-      // 兼容中文版 Excel 另存的 ANSI/GBK 编码 CSV：先按 UTF-8 解码，出现乱码字符时回退 GBK
-      const bytes = new Uint8Array(reader.result);
-      let text = new TextDecoder("utf-8").decode(bytes);
-      if (text.includes("�")) {
-        try { text = new TextDecoder("gbk").decode(bytes); } catch (err) { /* 保留 UTF-8 结果 */ }
-      }
-      const rows = parseCsvText(text);
-      if (rows.length < 2) { toast("CSV 内容为空"); return; }
-      const headers = rows[0].map((h) => h.trim().toLowerCase());
-      const idx = (keys) => {
-        for (const k of keys) {
-          const i = headers.indexOf(k);
-          if (i >= 0) return i;
-        }
-        return -1;
-      };
-      const iCode = idx(["code", "hs", "海关编码", "hs code"]);
-      const iCode6 = idx(["code6", "hs6", "国际6位", "国际 6 位"]);
-      const iName = idx(["name", "品名", "商品名称"]);
-      const iCat = idx(["category", "品类", "类别"]);
-      const iKw = idx(["keywords", "关键词"]);
-      const iRebate = idx(["rebate", "出口退税", "退税率"]);
-      const iSup = idx(["supervision", "监管", "监管条件"]);
-      const iIns = idx(["inspection", "检验检疫", "检疫"]);
-      const iNotes = idx(["notes", "备注", "注意事项"]);
-      const iSource = idx(["source", "来源"]);
-      if (iCode < 0) { toast("未找到编码列，请使用 code / 海关编码 表头"); return; }
-      const list = rows.slice(1).map((r) => {
-        const get = (i) => (i >= 0 && r[i] !== undefined ? r[i].trim() : "");
-        const code = get(iCode);
-        const code6 = get(iCode6) || code.replace(/\./g, "").slice(0, 6).replace(/(\d{4})(\d{2})/, "$1.$2");
-        return { id: uid(), code, code6, name: get(iName), category: get(iCat), keywords: get(iKw), rebate: get(iRebate), supervision: get(iSup), inspection: get(iIns), notes: get(iNotes), source: get(iSource) || "用户导入" };
-      }).filter((h) => h.code);
-      if (!list.length) { toast("没有可导入的编码"); return; }
-      if (!confirm(`导入后将替换当前 ${state.hsCodes.length} 条自定义 HS 编码（内置税则库不受影响），共 ${list.length} 条，继续？`)) return;
-      state.hsCodes = list;
-      saveState();
-      renderHs();
-      toast(`已导入 ${list.length} 条 HS 编码`);
-    } catch (err) {
-      toast("导入失败，请检查 CSV 格式");
-    }
-  };
-  reader.readAsArrayBuffer(file);
-}
-
-function resetHsCodes() {
-  if (!confirm("恢复内置 HS 编码并覆盖当前库？")) return;
-  state.hsCodes = JSON.parse(JSON.stringify(TRADE_DATA.hsCodes));
-  saveState();
-  renderHs();
-  toast("已恢复内置 HS 编码");
 }
 
 function renderGlossary() {
@@ -4837,6 +5214,37 @@ function init() {
     if (copyGlossary) copyText(copyGlossary.dataset.text || "");
     const editHs = e.target.closest(".js-edit-hs");
     if (editHs) hsModal(editHs.dataset.id);
+    const hsDetail = e.target.closest(".js-hs-detail") || e.target.closest(".js-hs-row");
+    if (hsDetail) {
+      const code = hsDetail.dataset.code;
+      if (code) showHsDetail(code);
+    }
+    const hsCopy = e.target.closest(".js-hs-copy");
+    if (hsCopy) {
+      const all = hsAll();
+      const h = all.find((x) => hsKey(x.code) === hsKey(hsCopy.dataset.code));
+      if (h) {
+        // 把内置编码克隆为用户自定义条目，便于编辑/导出
+        const newId = uid();
+        state.hsCodes.unshift({
+          id: newId,
+          code: h.code,
+          code6: h.code6,
+          name: h.name,
+          category: h.category,
+          keywords: (h.declarations || []).slice(0, 4).join(","),
+          rebate: h.tax_info?.ex_rebate || "",
+          supervision: (h.supervisions || []).join(","),
+          inspection: (h.quarantines || []).join(","),
+          notes: "",
+          source: "hsbianma.com 复制"
+        });
+        saveState();
+        closeModal();
+        renderHs();
+        toast("已复制为自定义编码，可编辑");
+      }
+    }
     const delHs = e.target.closest(".js-del-hs");
     if (delHs) {
       if (confirm("确定删除该 HS 编码吗？")) {
@@ -4943,9 +5351,7 @@ function init() {
   $("#hsFilter").addEventListener("change", renderHs);
   $("#addHsBtn").addEventListener("click", () => hsModal(null));
   $("#exportHsBtn").addEventListener("click", exportHs);
-  $("#importHsBtn").addEventListener("click", () => $("#hsImportFile").click());
-  $("#hsImportFile").addEventListener("change", (e) => { if (e.target.files[0]) importHsCsv(e.target.files[0]); e.target.value = ""; });
-  $("#resetHsBtn").addEventListener("click", resetHsCodes);
+  $("#hsUpdateBtn")?.addEventListener("click", startHsUpdate);
   $("#glossarySearch").addEventListener("input", renderGlossary);
   $("#glossaryFilter").addEventListener("change", renderGlossary);
 

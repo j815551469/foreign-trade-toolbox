@@ -441,10 +441,9 @@
               <input id="hsSearch" class="search-input" placeholder="搜索编码 / 品类 / 关键词">
               <select id="hsFilter" class="filter-select"></select>
               <div class="toolbar-actions">
-                <button class="btn" id="importHsBtn"><i data-lucide="upload"></i><span>导入 CSV</span></button>
-                <input type="file" id="hsImportFile" accept=".csv" hidden>
-                <button class="btn" id="exportHsBtn"><i data-lucide="download"></i><span>导出 CSV</span></button>
-                <button class="btn" id="resetHsBtn"><i data-lucide="rotate-ccw"></i><span>恢复内置</span></button>
+                <span id="hsUpdateTime" class="cell-sub" style="margin-right:6px"></span>
+                <button class="btn" id="hsUpdateBtn" title="从 hsbianma.com 拉取最新海关编码（约 40-60 分钟，可后台运行，中断后自动续传）"><i data-lucide="refresh-cw"></i><span>在线更新</span></button>
+                <button class="btn" id="exportHsBtn" title="导出完整 HS 编码（含税率/申报/监管/CIQ 等 20 列）"><i data-lucide="download"></i><span>导出 CSV</span></button>
                 <button class="btn primary" id="addHsBtn"><i data-lucide="plus"></i><span>新增编码</span></button>
               </div>
             </div>
@@ -693,7 +692,7 @@
   <script src="vendor/pdf.min.js"></script>
   <script src="vendor/html2canvas.min.js"></script>
   <script src="vendor/purify.min.js"></script>
-  <script src="hs-full.js"></script>
+  <script src="hs-detail.js"></script>
   <script src="data.js"></script>
   <script src="app.js"></script>
 </body>

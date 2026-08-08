@@ -23,3 +23,6 @@ npm-debug.log*
 # 系统
 .DS_Store
 Thumbs.db
+
+# HS 在线更新抓取缓存（运行时生成，绝不上传）
+hs-update/out/
