@@ -44,6 +44,7 @@ const defaultState = () => ({
   containers: JSON.parse(JSON.stringify(TRADE_DATA.containers)),
   lastLogistics: null,
   rates: defaultRates(),
+  rateHistory: [], // 汇率历史快照 [{date, rates}]
   settings: { company: "", sales: "", email: "", phone: "", baseCity: "Asia/Shanghai", myStart: "09:00", myEnd: "18:00", defaultIncoterm: "FOB", defaultPayment: "30% T/T deposit + 70% before shipment", defaultPort: "Ningbo", defaultCurrency: "USD", defaultValidity: "15 days", defaultDelivery: "25 days after deposit", sellerAddress: "", invoicePrefix: "INV", bankName: "", bankAccount: "", bankSwift: "", bankAddress: "" },
   docBuilder: { invoiceNo: "", poNo: "", date: todayISO(), seller: "", sellerAddress: "", buyer: "", buyerAddress: "", bank: "", cartons: "", currency: "USD", terms: "", payment: "", delivery: "", validity: "", from: "", to: "", vessel: "", marks: "", weight: "", volume: "", shipDate: "", eta: "", notes: "", docItems: [] },
   docCounter: 0,
@@ -75,7 +76,7 @@ function normalizeDocBuilder(base, raw) {
 function normalizeProducts(list) {
   // 数字字段强制转 Number（根因：导入/加载的字符串值会进入 innerHTML 属性与文本上下文 → XSS 注入面）
   return (list || []).map((p) => {
-    const b = { ...p, nameEn: p.nameEn || "" };
+    const b = { ...p, nameEn: p.nameEn || "", image: p.image || "" };
     b.priceTiers = Array.isArray(p.priceTiers) ? p.priceTiers.map((t) => ({ ...t, qty: Number(t.qty) || 0, price: Number(t.price) || 0 })) : [];
     b.cartonL = Number(p.cartonL) || 0;
     b.cartonW = Number(p.cartonW) || 0;
@@ -586,7 +587,38 @@ function renderDashboard() {
   $("#dashStaleQuotes").innerHTML = staleQuotes.length ? staleQuotes.slice(0, 6).map((q) => `
     <div class="stack-item clickable js-dash-quote" data-id="${q.id}"><div class="item-main"><div class="item-title">${esc(q.product)}</div><div class="item-sub">${esc(q.clientName || "")} · ${esc(q.ref || "")} · ${esc(q.date || "")}</div></div><div class="item-end">${statusBadge(q.status)}<div class="hint danger-text">已 ${q.days} 天未跟进</div></div></div>
   `).join("") : `<div class="empty-state">暂无超期未跟进的报价</div>`;
+  renderBizStats();
   updateClocks();
+}
+
+// 业绩概览：本月统计 + 近 6 个月订单额柱状图（无依赖 CSS）
+function renderBizStats() {
+  const wrap = $("#bizStats");
+  const chartEl = $("#bizChart");
+  if (!wrap) return;
+  const now = new Date();
+  const ym = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+  const curYm = ym(now);
+  const monthClients = state.clients.filter((c) => c.createdAt && ym(new Date(c.createdAt)) === curYm).length;
+  const monthQuotes = state.quotes.filter((q) => q.date && ym(new Date(q.date)) === curYm).length;
+  const monthOrders = state.orders.filter((o) => o.orderDate && ym(new Date(o.orderDate)) === curYm);
+  const cny = (o) => (Number(o.amount) || 0) * cnyPerOrderCurrency(o.currency || "USD");
+  const monthAmount = monthOrders.reduce((s, o) => s + cny(o), 0);
+  const monthProfit = monthOrders.reduce((s, o) => s + (Number(o.profit) || 0), 0);
+  wrap.innerHTML = `
+    <div class="biz-stat"><div class="biz-num">${monthClients}</div><div class="biz-label">本月新增客户</div></div>
+    <div class="biz-stat"><div class="biz-num">${monthQuotes}</div><div class="biz-label">本月报价</div></div>
+    <div class="biz-stat"><div class="biz-num">¥${fmt(monthAmount, 0)}</div><div class="biz-label">本月订单额(≈RMB)</div></div>
+    <div class="biz-stat"><div class="biz-num">¥${fmt(monthProfit, 0)}</div><div class="biz-label">本月毛利(≈RMB)</div></div>`;
+  if (chartEl) {
+    const months = [];
+    for (let i = 5; i >= 0; i--) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); months.push({ ym: ym(d), label: `${d.getMonth() + 1}月` }); }
+    const amounts = months.map((m) => state.orders.filter((o) => o.orderDate && ym(new Date(o.orderDate)) === m.ym).reduce((s, o) => s + cny(o), 0));
+    const max = Math.max(...amounts, 1);
+    chartEl.innerHTML = `<div class="biz-chart-title">近 6 个月订单额（≈RMB）</div><div class="biz-bars">${
+      amounts.map((a, i) => `<div class="biz-bar-col"><div class="biz-bar" style="height:${Math.round((a / max) * 100)}%"></div><div class="biz-bar-label">${months[i].label}</div><div class="biz-bar-val">${fmt(a, 0)}</div></div>`).join("")
+    }</div>`;
+  }
 }
 
 const QUOTE_REQUIRED = {
@@ -1160,7 +1192,20 @@ function renderCurrency() {
     const mins = state.ratesUpdatedAt ? Math.max(1, Math.round((Date.now() - state.ratesUpdatedAt) / 60000)) : null;
     updEl.textContent = mins !== null ? `1 USD = ? · 更新于 ${mins} 分钟前` : "1 USD = ?";
   }
+  renderRateHistory();
   convertCurrency();
+}
+
+// 汇率历史统计（最近 30 次在线更新快照，离线可查趋势）
+function renderRateHistory() {
+  const el = $("#rateHistory");
+  if (!el) return;
+  const hist = (state.rateHistory || []).slice().reverse();
+  if (!hist.length) { el.innerHTML = `<div class="empty-state">暂无历史记录，点击「在线更新」后自动生成</div>`; return; }
+  const codes = TRADE_DATA.currencies.map((c) => c.code);
+  el.innerHTML = `<table class="data-table"><thead><tr><th>日期</th>${codes.map((c) => `<th>${c}</th>`).join("")}</tr></thead><tbody>${
+    hist.map((h) => `<tr><td><strong>${esc(h.date)}</strong></td>${codes.map((c) => `<td>${h.rates && h.rates[c] ? fmt(h.rates[c], 4) : "-"}</td>`).join("")}</tr>`).join("")
+  }</tbody></table>`;
 }
 
 function convertCurrency() {
@@ -1178,6 +1223,12 @@ async function refreshRates(silent) {
     if (data && data.rates) {
       Object.keys(state.rates).forEach((code) => { if (data.rates[code]) state.rates[code] = data.rates[code]; });
       state.ratesUpdatedAt = Date.now();
+      // 记录历史快照（同一天覆盖，保留最近 30 次）
+      state.rateHistory = state.rateHistory || [];
+      const today = todayISO();
+      state.rateHistory = state.rateHistory.filter((h) => h.date !== today);
+      state.rateHistory.push({ date: today, rates: { ...state.rates } });
+      if (state.rateHistory.length > 30) state.rateHistory = state.rateHistory.slice(-30);
       saveState();
       renderCurrency();
       if (!silent) toast("汇率已在线更新");
@@ -1478,6 +1529,101 @@ function importProductsCsv(file) {
   reader.readAsArrayBuffer(file);
 }
 
+function importOrdersCsv(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const bytes = new Uint8Array(reader.result);
+      let text = new TextDecoder("utf-8").decode(bytes);
+      if (text.includes("�")) { try { text = new TextDecoder("gbk").decode(bytes); } catch (e) { /* ignore */ } }
+      const rows = parseCsvText(text);
+      if (rows.length < 2) { toast("CSV 内容为空"); return; }
+      const headers = rows[0].map((h) => String(h).trim().toLowerCase());
+      const idx = (keys) => { for (const k of keys) { const i = headers.indexOf(k); if (i >= 0) return i; } return -1; };
+      const iPo = idx(["订单号", "pono", "po"]);
+      const iCl = idx(["客户", "clientname", "客户名称"]);
+      const iPro = idx(["产品", "product"]);
+      const iQty = idx(["数量", "qty"]);
+      const iAmt = idx(["金额", "amount"]);
+      const iCur = idx(["币种", "currency"]);
+      const iSt = idx(["状态", "status"]);
+      const iInc = idx(["贸易条款", "incoterm", "条款"]);
+      const iPay = idx(["付款", "payment", "付款方式"]);
+      const iOd = idx(["下单日期", "orderdate", "下单日"]);
+      const iDd = idx(["交期", "deliverydate", "交期日期"]);
+      const iPort = idx(["港口", "port", "起运港"]);
+      const iNotes = idx(["备注", "notes", "note"]);
+      if (iPo < 0 && iPro < 0) { toast("未找到订单号/产品列，请使用 订单号 或 产品 表头"); return; }
+      const existing = new Set(state.orders.map((o) => o.poNo));
+      let added = 0, skipped = 0;
+      rows.slice(1).forEach((r) => {
+        const get = (i) => (i >= 0 && r[i] !== undefined ? String(r[i]).trim() : "");
+        const poNo = get(iPo), product = get(iPro);
+        if (!poNo && !product) return;
+        if (poNo && existing.has(poNo)) { skipped++; return; }
+        state.orders.unshift({
+          id: uid(), poNo, clientId: "", clientName: get(iCl), product,
+          qty: Number(get(iQty)) || 0, amount: Number(get(iAmt)) || 0, currency: get(iCur) || "USD",
+          status: get(iSt) || "已接单", incoterm: get(iInc) || "", payment: get(iPay) || "",
+          orderDate: get(iOd) || todayISO(), deliveryDate: get(iDd) || "",
+          port: get(iPort) || "", tracking: "", notes: get(iNotes),
+        });
+        if (poNo) existing.add(poNo);
+        added++;
+      });
+      if (!added) { toast(skipped ? `没有新订单（${skipped} 条重复跳过）` : "没有可导入的订单"); return; }
+      saveState(); renderOrders();
+      toast(`已导入 ${added} 个订单${skipped ? `，跳过 ${skipped} 条重复` : ""}`);
+    } catch (err) { toast("导入失败，请检查 CSV 格式"); }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function importQuotesCsv(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const bytes = new Uint8Array(reader.result);
+      let text = new TextDecoder("utf-8").decode(bytes);
+      if (text.includes("�")) { try { text = new TextDecoder("gbk").decode(bytes); } catch (e) { /* ignore */ } }
+      const rows = parseCsvText(text);
+      if (rows.length < 2) { toast("CSV 内容为空"); return; }
+      const headers = rows[0].map((h) => String(h).trim().toLowerCase());
+      const idx = (keys) => { for (const k of keys) { const i = headers.indexOf(k); if (i >= 0) return i; } return -1; };
+      const iRef = idx(["报价号", "ref", "报价单号"]);
+      const iCl = idx(["客户", "clientname", "客户名称"]);
+      const iPro = idx(["产品", "product"]);
+      const iUp = idx(["单价", "unitprice", "价格"]);
+      const iCur = idx(["币种", "currency"]);
+      const iQty = idx(["数量", "qty"]);
+      const iInc = idx(["贸易条款", "incoterm", "条款"]);
+      const iSt = idx(["状态", "status"]);
+      const iDate = idx(["日期", "date", "报价日期"]);
+      const iNotes = idx(["备注", "notes", "note"]);
+      if (iPro < 0 && iRef < 0) { toast("未找到产品/报价号列，请使用 产品 或 报价号 表头"); return; }
+      const existing = new Set(state.quotes.map((q) => q.ref));
+      let added = 0, skipped = 0;
+      rows.slice(1).forEach((r) => {
+        const get = (i) => (i >= 0 && r[i] !== undefined ? String(r[i]).trim() : "");
+        const ref = get(iRef), product = get(iPro);
+        if (!ref && !product) return;
+        if (ref && existing.has(ref)) { skipped++; return; }
+        state.quotes.unshift({
+          id: uid(), ref, clientId: "", clientName: get(iCl), product,
+          unitPrice: Number(get(iUp)) || 0, currency: get(iCur) || "USD", qty: Number(get(iQty)) || 0,
+          incoterm: get(iInc) || "", status: get(iSt) || "新报价", date: get(iDate) || todayISO(), notes: get(iNotes),
+        });
+        if (ref) existing.add(ref);
+        added++;
+      });
+      if (!added) { toast(skipped ? `没有新报价（${skipped} 条重复跳过）` : "没有可导入的报价"); return; }
+      saveState(); renderQuotes();
+      toast(`已导入 ${added} 条报价${skipped ? `，跳过 ${skipped} 条重复` : ""}`);
+    } catch (err) { toast("导入失败，请检查 CSV 格式"); }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
 function renderQuotes() {
   const q = ($("#quoteSearch").value || "").toLowerCase();
   const f = $("#quoteFilter").value;
@@ -1758,6 +1904,31 @@ function exportOrders() {
   state.orders.forEach((o) => rows.push([o.poNo, o.clientName, o.product, o.qty, o.amount, o.currency, o.cost ?? "", o.profit ?? "", o.status, o.incoterm, o.payment, o.orderDate, o.deliveryDate, o.port, o.tracking, (o.items || []).map((it) => `${it.name} x${it.qty} @${it.unitPrice}`).join("; "), o.notes]));
   const csv = rows.map((r) => r.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
   downloadFile("orders.csv", csv, "text/csv;charset=utf-8");
+}
+
+// 导出为 Excel（SpreadsheetML XML，Excel/WPS 直接打开）
+function exportExcel(filename, sheetName, rows) {
+  const escX = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const cell = (v) => {
+    if (v === null || v === undefined || v === "") return "<Cell/>";
+    const isNum = typeof v === "number" && isFinite(v);
+    return `<Cell><Data ss:Type="${isNum ? "Number" : "String"}">${isNum ? v : escX(v)}</Data></Cell>`;
+  };
+  const xml = `<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+<Worksheet ss:Name="${escX(sheetName)}"><Table>${rows.map((r) => `<Row>${r.map(cell).join("")}</Row>`).join("")}</Table></Worksheet>
+</Workbook>`;
+  downloadFile(filename, xml, "application/vnd.ms-excel;charset=utf-8");
+}
+function exportOrdersExcel() {
+  const rows = [["PO 号", "客户", "产品", "数量", "金额", "币种", "成本RMB", "毛利RMB", "状态", "贸易条款", "付款方式", "下单日期", "交期", "港口", "物流单号", "备注"]];
+  state.orders.forEach((o) => rows.push([o.poNo, o.clientName, o.product, o.qty, o.amount, o.currency, o.cost ?? "", o.profit ?? "", o.status, o.incoterm, o.payment, o.orderDate, o.deliveryDate, o.port, o.tracking, o.notes]));
+  exportExcel("orders.xls", "订单", rows);
+}
+function exportQuotesExcel() {
+  const rows = [["报价号", "客户", "产品", "单价", "币种", "数量", "金额", "贸易条款", "状态", "日期", "备注"]];
+  state.quotes.forEach((q) => rows.push([q.ref, q.clientName, q.product, q.unitPrice, q.currency, q.qty, (Number(q.unitPrice) || 0) * (Number(q.qty) || 0), q.incoterm, q.status, q.date, q.notes]));
+  exportExcel("quotes.xls", "报价", rows);
 }
 
 function copyOrderSummary(id) {
@@ -2997,6 +3168,31 @@ function renderDocTemplate(type, data) {
   return sanitizeHtml(renderTemplateHtml(docTemplateHtml(type), data));
 }
 
+// —— 单据模板编辑器（基础版：编辑当前单据类型的模板 HTML）——
+function openDocTemplateEditor() {
+  const type = $("#docGenType").value;
+  const name = DOC_GENERATORS[type] ? DOC_GENERATORS[type].name : type;
+  openModal(`
+    <div class="modal modal-doc-tpl">
+      <div class="modal-head"><h3>编辑模板：${esc(name)}</h3><button class="icon-btn" id="modalCloseBtn"><i data-lucide="x"></i></button></div>
+      <div class="hint" style="padding:0 0 10px">可用变量：{{docDate}} {{docGoodsRows}}（含单价金额行）{{docGoodsRowsPlain}}（无价行）{{docAmount}} {{docAmountWords}} {{docCompany}} {{docBuyer}} {{docPayment}} {{docDelivery}} {{docValidity}} {{docTerms}} {{docPort}} {{docVessel}} {{docMarks}} {{docNotes}} 等。保存后生成 PDF 自动生效；不确定时先用「文本预览」核对。</div>
+      <textarea id="docTplInput" class="doc-tpl-editor" spellcheck="false"></textarea>
+      <div class="modal-actions"><button class="btn" id="modalCancelBtn">取消</button><button class="btn primary" id="docTplSaveBtn"><i data-lucide="save"></i><span>保存模板</span></button></div>
+    </div>`);
+  $("#docTplInput").value = docTemplateHtml(type);
+  $("#docTplSaveBtn")?.addEventListener("click", saveDocTemplate);
+  $("#docTplInput")?.focus();
+}
+function saveDocTemplate() {
+  const type = $("#docGenType").value;
+  const val = ($("#docTplInput") && $("#docTplInput").value) || "";
+  state.docTemplates = state.docTemplates || {};
+  state.docTemplates[type] = val;
+  saveState();
+  closeModal();
+  toast("模板已保存（生成 PDF 时自动生效）");
+}
+
 async function captureTemplatePage(type, data) {
   if (!window.html2canvas) throw new Error("html2canvas not loaded");
   let root = $("#docRenderRoot");
@@ -3588,13 +3784,15 @@ function renderProducts() {
   $("#productTable").innerHTML = `<thead><tr><th>产品</th><th>类别</th><th>HS 编码</th><th>成本</th><th>MOQ</th><th>包装</th><th>供应商</th><th class="actions">操作</th></tr></thead><tbody>${
     list.length ? list.map((p) => {
       const tiers = (p.priceTiers || []).filter((t) => t.qty > 0 && t.price > 0).sort((a, b) => a.qty - b.qty);
-      return `<tr><td><div class="cell-main">${esc(p.model)} ${esc(p.name)}</div><div class="cell-sub">${p.nameEn ? esc(p.nameEn) + " · " : ""}${esc(p.notes || "")}</div></td>
+      return `<tr><td><div class="cell-main">${p.image ? `<img class="prod-thumb" src="${esc(p.image)}" alt="">` : ""} ${esc(p.model)} ${esc(p.name)}</div><div class="cell-sub">${p.nameEn ? esc(p.nameEn) + " · " : ""}${esc(p.notes || "")}</div></td>
       <td>${esc(p.category)}</td><td>${esc(p.hsCode)}</td><td><strong>¥${fmt(p.unitCost)}</strong>${tiers.length ? `<div class="cell-sub">${esc(tiers.map((t) => `${fmtInt(t.qty)}+:¥${t.price}`).join(" "))}</div>` : ""}</td><td>${fmtInt(p.moq)}</td>
       <td><div class="cell-sub">${esc(p.cartonL ?? 0)}×${esc(p.cartonW ?? 0)}×${esc(p.cartonH ?? 0)} cm</div><div class="cell-sub">${esc(p.cartonWeight ?? 0)} kg / ${esc(p.qtyPerCarton ?? 0)} pcs</div></td>
       <td>${esc(p.supplier)}</td>
       <td><div class="actions"><button class="icon-btn js-load-product" data-id="${p.id}" title="带入报价"><i data-lucide="calculator"></i></button><button class="icon-btn js-edit-product" data-id="${p.id}" title="编辑"><i data-lucide="pencil"></i></button><button class="icon-btn js-del-product" data-id="${p.id}" title="删除"><i data-lucide="trash-2"></i></button></div></td></tr>`;
     }).join("") : `<tr><td colspan="8" class="empty-state">暂无产品资料</td></tr>`
   }</tbody>`;
+  // 图片加载失败时隐藏（CSP 禁止内联 onerror，用 JS 绑定）
+  $$(".prod-thumb").forEach((img) => { img.onerror = () => { img.style.display = "none"; }; });
   refreshIcons();
 }
 
@@ -3616,6 +3814,7 @@ function productModal(id) {
       <label>每箱毛重（kg）<input id="pCartonWeight" type="number" value="${esc(p.cartonWeight ?? "")}"></label>
       <label>每箱数量<input id="pQtyPerCarton" type="number" value="${esc(p.qtyPerCarton ?? "")}"></label>
       <label>供应商<input id="pSupplier" value="${esc(p.supplier || "")}"></label>
+      <label style="grid-column:1/-1">产品图片 URL<input id="pImage" value="${esc(p.image || "")}" placeholder="https://...（可选，产品列表/报价显示缩略图）"></label>
     </div>
     <div class="color-field">
       <div class="color-field-head"><span>价格阶梯（数量 ≥ / 成本 ¥ 每件）</span><button type="button" class="link-btn" id="addPriceTierBtn"><i data-lucide="plus"></i><span>加一档</span></button></div>
@@ -3698,6 +3897,7 @@ function saveProductFromModal(id) {
     cartonL: Number($("#pCartonL").value) || 0, cartonW: Number($("#pCartonW").value) || 0, cartonH: Number($("#pCartonH").value) || 0,
     cartonWeight: Number($("#pCartonWeight").value) || 0, qtyPerCarton: Number($("#pQtyPerCarton").value) || 0,
     supplier: $("#pSupplier").value.trim(), notes: $("#pNotes").value.trim(),
+    image: ($("#pImage") && $("#pImage").value.trim()) || "",
     priceTiers: $$("#priceTierList .tier-row").map((tr) => ({ qty: Number(tr.querySelector(".pt-qty")?.value) || 0, price: Number(tr.querySelector(".pt-price")?.value) || 0 })).filter((t) => t.qty > 0 && t.price > 0).sort((a, b) => a.qty - b.qty)
   };
   if (!data.model && !data.name) { toast("请填写型号或产品名称"); return; }
@@ -4672,6 +4872,9 @@ function init() {
   $("#orderFilter").addEventListener("change", renderOrders);
   $("#addOrderBtn").addEventListener("click", () => orderModal(null));
   $("#exportOrdersBtn").addEventListener("click", exportOrders);
+  $("#exportOrdersExcelBtn")?.addEventListener("click", exportOrdersExcel);
+  $("#importOrdersBtn")?.addEventListener("click", () => $("#ordersImportFile").click());
+  $("#ordersImportFile")?.addEventListener("change", (e) => { if (e.target.files[0]) importOrdersCsv(e.target.files[0]); e.target.value = ""; });
   $("#orderTable").addEventListener("change", (e) => {
     const sel = e.target.closest(".js-order-status");
     if (!sel) return;
@@ -4733,6 +4936,9 @@ function init() {
   $("#quoteFilter").addEventListener("change", renderQuotes);
   $("#addQuoteBtn").addEventListener("click", () => quoteModal(null));
   $("#exportQuotesBtn").addEventListener("click", exportQuotes);
+  $("#exportQuotesExcelBtn")?.addEventListener("click", exportQuotesExcel);
+  $("#importQuotesBtn")?.addEventListener("click", () => $("#quotesImportFile").click());
+  $("#quotesImportFile")?.addEventListener("change", (e) => { if (e.target.files[0]) importQuotesCsv(e.target.files[0]); e.target.value = ""; });
   $("#quoteTable").addEventListener("change", (e) => {
     const sel = e.target.closest(".js-quote-status");
     if (!sel) return;
@@ -4776,6 +4982,7 @@ function init() {
     }
   });
   $("#genDocBtn").addEventListener("click", genDoc);
+  $("#docTplEditBtn")?.addEventListener("click", openDocTemplateEditor);
   $("#genDocPdfBtn").addEventListener("click", () => genDocPdf($("#docGenType").value));
   $("#printDocBtn").addEventListener("click", printDoc);
   $("#docHistoryClearBtn").addEventListener("click", () => {

@@ -359,6 +359,22 @@ textarea { resize: vertical; min-height: 90px; line-height: 1.55; }
 .ob-step { background: rgba(255,255,255,.15); border-radius: 8px; padding: 8px 14px; font-size: 13px; cursor: pointer; transition: background .15s; }
 .ob-step:hover { background: rgba(255,255,255,.3); }
 #obDismissBtn { margin-left: auto; background: #fff; color: #1f3a5f; }
+.rate-history { overflow-x: auto; }
+.rate-history table { min-width: 560px; }
+/* 业绩概览 */
+.biz-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 14px; }
+.biz-stat { background: #f8fafc; border: 1px solid #eef2f7; border-radius: 10px; padding: 12px 14px; text-align: center; }
+.biz-num { font-size: 22px; font-weight: 700; color: #1f3a5f; }
+.biz-label { font-size: 12px; color: #64748b; margin-top: 4px; }
+.biz-chart-title { font-size: 13px; font-weight: 600; color: #475569; margin-bottom: 10px; }
+.biz-bars { display: flex; align-items: flex-end; gap: 14px; height: 120px; }
+.biz-bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; }
+.biz-bar { width: 100%; max-width: 48px; background: linear-gradient(180deg, #274a77, #1f3a5f); border-radius: 5px 5px 0 0; min-height: 2px; }
+.biz-bar-label { font-size: 12px; color: #64748b; margin-top: 6px; }
+.biz-bar-val { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+.prod-thumb { width: 36px; height: 36px; object-fit: cover; border-radius: 6px; vertical-align: middle; margin-right: 8px; border: 1px solid #eef2f7; }
+.modal-doc-tpl { width: 720px; max-width: 94vw; }
+.doc-tpl-editor { width: 100%; height: 420px; font-family: Consolas, Menlo, monospace; font-size: 12px; line-height: 1.5; padding: 10px 12px; border: 1px solid #dce3e9; border-radius: 8px; box-sizing: border-box; resize: vertical; }
 .lic-machine { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #475569; }
 .lic-machine span { white-space: nowrap; }
 .lic-machine code { font-family: Consolas, monospace; font-size: 12px; background: #f1f5f9; padding: 3px 8px; border-radius: 4px; word-break: break-all; flex: 1; }

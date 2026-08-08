@@ -73,6 +73,11 @@
           </div>
           <div class="stat-grid" id="dashStats"></div>
           <div class="dash-grid">
+            <div class="panel" style="grid-column:1/-1">
+              <div class="panel-head"><h3>业绩概览</h3><span class="hint" id="bizStatsHint"></span></div>
+              <div id="bizStats" class="biz-stats"></div>
+              <div id="bizChart" class="biz-chart"></div>
+            </div>
             <div class="panel">
               <div class="panel-head">
                 <h3>待跟进客户</h3>
@@ -268,6 +273,10 @@
               <div class="panel-head"><h3>汇率速查表</h3><span class="hint" id="rateUpdatedHint">1 USD = ?</span></div>
               <div id="rateTable" class="rate-grid"></div>
             </div>
+            <div class="panel">
+              <div class="panel-head"><h3>历史汇率</h3><span class="hint">每次在线更新的快照（离线也能看历史趋势）</span></div>
+              <div id="rateHistory" class="rate-history"></div>
+            </div>
           </div>
         </section>
 
@@ -342,6 +351,9 @@
             <select id="quoteFilter" class="filter-select"></select>
             <div class="toolbar-actions">
               <button class="btn" id="exportQuotesBtn"><i data-lucide="download"></i><span>导出 CSV</span></button>
+              <button class="btn" id="exportQuotesExcelBtn"><i data-lucide="file-spreadsheet"></i><span>导出 Excel</span></button>
+              <button class="btn" id="importQuotesBtn"><i data-lucide="upload"></i><span>导入 CSV</span></button>
+              <input type="file" id="quotesImportFile" accept=".csv" hidden>
               <button class="btn primary" id="addQuoteBtn"><i data-lucide="plus"></i><span>手动新增</span></button>
             </div>
           </div>
@@ -357,6 +369,9 @@
             <div class="toolbar-actions">
               <button class="btn" id="colorDictBtn"><i data-lucide="palette"></i><span>颜色字典</span></button>
               <button class="btn" id="exportOrdersBtn"><i data-lucide="download"></i><span>导出 CSV</span></button>
+              <button class="btn" id="exportOrdersExcelBtn"><i data-lucide="file-spreadsheet"></i><span>导出 Excel</span></button>
+              <button class="btn" id="importOrdersBtn"><i data-lucide="upload"></i><span>导入 CSV</span></button>
+              <input type="file" id="ordersImportFile" accept=".csv" hidden>
               <button class="btn primary" id="addOrderBtn"><i data-lucide="plus"></i><span>新增订单</span></button>
             </div>
           </div>
@@ -472,6 +487,7 @@
                 <h3>单证信息</h3>
                 <div class="toolbar-actions">
                   <button class="btn ghost" id="docClearBtn"><i data-lucide="eraser"></i><span>清空</span></button>
+                  <button class="btn ghost" id="docTplEditBtn"><i data-lucide="file-code"></i><span>编辑模板</span></button>
                 </div>
               </div>
               <label class="doc-order-label">从订单带入<select id="docOrderSelect"><option value="">手动填写</option></select></label>
