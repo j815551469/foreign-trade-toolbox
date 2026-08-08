@@ -2393,16 +2393,21 @@ function fillDocFromOrder(id) {
   const weight = product && cartons ? (product.cartonWeight * cartons).toFixed(1) : "";
   $("#docPoNo").value = o.poNo || "";
   $("#docBuyer").value = client ? client.company || client.name : o.clientName || "";
-  // 订单多产品明细 → 单证多行货物
+  // 订单多产品明细 → 单证多行货物（产品描述只取英文名 nameEn||model||name）
   const orderItems = (Array.isArray(o.items) && o.items.length) ? o.items
-    : (o.product ? [{ name: o.product, hs: product ? product.hsCode : "", qty: o.qty ? String(o.qty) : "", unitPrice: qty && o.amount ? (o.amount / qty).toFixed(2) : "" }] : []);
+    : (o.product ? [{ pid: product ? product.id : "", name: o.product, hs: product ? product.hsCode : "", qty: o.qty ? String(o.qty) : "", unitPrice: qty && o.amount ? (o.amount / qty).toFixed(2) : "" }] : []);
   if (!Array.isArray(state.docBuilder.docItems)) state.docBuilder.docItems = [];
-  state.docBuilder.docItems = orderItems.map((it) => ({
-    desc: it.name || "",
-    hs: it.hs || "",
-    qty: it.qty ? String(it.qty).replace(/\B(?=(\d{3})+(?!\d))/g, ",") : "",
-    unitPrice: it.unitPrice || ""
-  }));
+  state.docBuilder.docItems = orderItems.map((it) => {
+    const p = it.pid ? state.products.find((x) => x.id === it.pid)
+      : state.products.find((x) => (it.name || "").includes(x.name) || (it.name || "").includes(x.model));
+    const desc = (p && (p.nameEn || p.model || p.name)) || it.name || "";
+    return {
+      desc,
+      hs: it.hs || (p ? p.hsCode : "") || "",
+      qty: it.qty ? String(it.qty).replace(/\B(?=(\d{3})+(?!\d))/g, ",") : "",
+      unitPrice: it.unitPrice || ""
+    };
+  });
   renderDocItems();
   $("#docCartons").value = cartons ? String(cartons) : "";
   $("#docCurrency").value = o.currency || "USD";
