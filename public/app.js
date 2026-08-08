@@ -279,10 +279,16 @@ async function updateAuthLicenseHint() {
     const d = await r.json();
     const admin = (d.adminAccount && d.adminAccount.username) || "";
     const pass = (d.adminAccount && d.adminAccount.passHint) || "";
+    const daysToExpiry = d.expires ? Math.ceil((Date.parse(d.expires) - Date.now()) / (24 * 3600 * 1000)) : Infinity;
     if (d.mode === "licensed") {
-      el.innerHTML = `<span style="color:#16a34a"><i data-lucide="badge-check"></i> 已激活授权 · <strong>${esc(d.company || "")}</strong> · ${Number(d.seats) || "-"} 席位 · 到期 ${esc(String(d.expires || "").slice(0, 10) || "永久")}</span>`;
+      if (isFinite(daysToExpiry) && daysToExpiry <= 3) {
+        el.innerHTML = `<span style="color:#b45309;font-weight:600"><i data-lucide="alert-triangle"></i> 授权将于 <strong>${daysToExpiry} 天</strong>后到期（${esc(String(d.expires).slice(0, 10))}），请及时联系授权方续费！</span>`;
+      } else {
+        el.innerHTML = `<span style="color:#16a34a"><i data-lucide="badge-check"></i> 已激活授权 · <strong>${esc(d.company || "")}</strong> · ${Number(d.seats) || "-"} 席位 · 到期 ${esc(String(d.expires || "").slice(0, 10) || "永久")}</span>`;
+      }
     } else if (d.mode === "trial") {
-      el.innerHTML = `试用剩余 <strong>${Number(d.daysLeft) || 0} 天</strong> · 可注册 ${Number(d.seats) || "-"} 个账号${admin ? `<br>试用账号：<strong>${esc(admin)}</strong> / 初始密码 <strong>${esc(pass)}</strong>（登录后请尽快修改密码）` : ""}`;
+      const warn = Number(d.daysLeft) <= 3;
+      el.innerHTML = `${warn ? `<span style="color:#b45309;font-weight:600"><i data-lucide="alert-triangle"></i> 试用将于 <strong>${Number(d.daysLeft) || 0} 天</strong>后到期，请尽快激活授权！</span>` : `试用剩余 <strong>${Number(d.daysLeft) || 0} 天</strong>`} · 可注册 ${Number(d.seats) || "-"} 个账号${admin ? `<br>试用账号：<strong>${esc(admin)}</strong> / 初始密码 <strong>${esc(pass)}</strong>（登录后请尽快修改密码）` : ""}`;
     } else {
       el.innerHTML = `<span style="color:#dc2626">试用已到期，请粘贴授权码激活</span>`;
     }
@@ -3207,10 +3213,16 @@ async function renderLicenseStatus() {
     if (!r.ok) { statusEl.innerHTML = `<span class="cell-sub">无法获取授权状态：${esc(d.error || "未知错误")}</span>`; return; }
     const mcEl = $("#licenseMachine");
     if (mcEl) mcEl.innerHTML = `机器码：<code>${esc(d.machine || "-")}</code>`;
+    const daysToExpiry = d.expires ? Math.ceil((Date.parse(d.expires) - Date.now()) / (24 * 3600 * 1000)) : Infinity;
     if (d.mode === "licensed") {
-      statusEl.innerHTML = `<span><i data-lucide="badge-check"></i> 已激活授权 · <strong>${esc(d.company || "")}</strong> · ${Number(d.seats) || "-"} 席位${d.expires ? " · 到期 " + esc(String(d.expires).slice(0, 10)) : " · 永久"}</span>`;
+      if (isFinite(daysToExpiry) && daysToExpiry <= 3) {
+        statusEl.innerHTML = `<span style="color:#b45309;font-weight:600"><i data-lucide="alert-triangle"></i> 授权将于 <strong>${daysToExpiry} 天</strong>后到期（${esc(String(d.expires).slice(0, 10))}），请及时联系授权方续费！</span>`;
+      } else {
+        statusEl.innerHTML = `<span><i data-lucide="badge-check"></i> 已激活授权 · <strong>${esc(d.company || "")}</strong> · ${Number(d.seats) || "-"} 席位${d.expires ? " · 到期 " + esc(String(d.expires).slice(0, 10)) : " · 永久"}</span>`;
+      }
     } else if (d.mode === "trial") {
-      statusEl.innerHTML = `<span><i data-lucide="hourglass"></i> 试用期剩余 <strong>${Number(d.daysLeft) || 0} 天</strong>（${Number(d.seats) || "-"} 席位）</span>`;
+      const warn = Number(d.daysLeft) <= 3;
+      statusEl.innerHTML = `<span${warn ? ` style="color:#b45309;font-weight:600"` : ""}><i data-lucide="hourglass"></i> 试用期剩余 <strong>${Number(d.daysLeft) || 0} 天</strong>（${Number(d.seats) || "-"} 席位）${warn ? "，请尽快激活授权！" : ""}</span>`;
     } else {
       statusEl.innerHTML = `<span><i data-lucide="alert-triangle"></i> 试用已到期，请联系授权方获取授权码激活（需管理员登录）</span>`;
     }
