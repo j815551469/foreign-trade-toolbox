@@ -286,7 +286,12 @@ async function updateAuthLicenseHint() {
       }
     } else if (d.mode === "trial") {
       const warn = Number(d.daysLeft) <= 3;
-      el.innerHTML = `${warn ? `<span style="color:#b45309;font-weight:600"><i data-lucide="alert-triangle"></i> 试用将于 <strong>${Number(d.daysLeft) || 0} 天</strong>后到期！</span>` : `试用剩余 <strong>${Number(d.daysLeft) || 0} 天</strong>`} · 可注册 ${Number(d.seats) || "-"} 个账号${admin ? `<br><span style="color:#64748b">试用账号 <strong>${esc(admin)}</strong> / 初始密码 <strong>${esc(pass)}</strong></span>` : ""}`;
+      if (!admin) {
+        // 全新安装：还没有账号 → 引导注册（第一个注册自动成为管理员）
+        el.innerHTML = `${warn ? `<span style="color:#b45309;font-weight:600"><i data-lucide="alert-triangle"></i> 试用将于 <strong>${Number(d.daysLeft) || 0} 天</strong>后到期！</span>` : `试用剩余 <strong>${Number(d.daysLeft) || 0} 天</strong>`} · 可注册 ${Number(d.seats) || "-"} 个账号<br><span style="color:#64748b">还没有账号？点「注册新账号」，<strong>第一个注册的账号自动成为管理员</strong>。邀请码见服务器控制台或 data/register-key.txt。</span>`;
+      } else {
+        el.innerHTML = `${warn ? `<span style="color:#b45309;font-weight:600"><i data-lucide="alert-triangle"></i> 试用将于 <strong>${Number(d.daysLeft) || 0} 天</strong>后到期！</span>` : `试用剩余 <strong>${Number(d.daysLeft) || 0} 天</strong>`} · 可注册 ${Number(d.seats) || "-"} 个账号<br><span style="color:#64748b">试用账号 <strong>${esc(admin)}</strong> / 初始密码 <strong>${esc(pass)}</strong>（登录后请尽快修改密码）</span>`;
+      }
     } else {
       el.innerHTML = `<span style="color:#dc2626;font-weight:600">试用已到期，请激活授权</span>`;
     }
