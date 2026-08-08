@@ -291,11 +291,11 @@ async function updateAuthLicenseHint() {
     }
     // 有账号后：所有人员只显示公司名与授权到期日（授权管理在设置页，仅管理员可见）
     if (d.mode === "licensed") {
-      const companyLine = `<span style="color:#334155"><strong>${esc(d.company || "")}</strong> · 授权到期 ${esc(String(d.expires || "").slice(0, 10) || "永久")}</span>`;
       if (isFinite(daysToExpiry) && daysToExpiry <= 3) {
-        el.innerHTML = `<span style="color:#b45309;font-weight:600"><i data-lucide="alert-triangle"></i> 授权将于 <strong>${daysToExpiry} 天</strong>后到期（${esc(String(d.expires).slice(0, 10))}），请及时续费</span><br>${companyLine}`;
+        // 简洁一行：公司名 + 剩余天数（不重复日期）
+        el.innerHTML = `<span style="color:#b45309;font-weight:600"><i data-lucide="alert-triangle"></i> ${esc(d.company || "")} · 授权将于 <strong>${daysToExpiry} 天</strong>后到期</span>`;
       } else {
-        el.innerHTML = companyLine;
+        el.innerHTML = `<span style="color:#334155"><strong>${esc(d.company || "")}</strong> · 授权到期 ${esc(String(d.expires || "").slice(0, 10) || "永久")}</span>`;
       }
     } else if (d.mode === "trial") {
       const warn = Number(d.daysLeft) <= 3;
