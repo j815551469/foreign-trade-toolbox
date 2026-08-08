@@ -129,42 +129,128 @@ function getSecret() {
 }
 const SECRET = getSecret();
 
-// 同步原子写（users.json 等小文件）
+// 同步原子写（备用工具；SQLite 已接管主存储）
 function atomicWriteSync(file, data) {
   const tmp = file + "." + process.pid + ".tmp";
   fs.writeFileSync(tmp, data);
   try { fs.renameSync(tmp, file); } catch (e) { fs.copyFileSync(tmp, file); fs.unlinkSync(tmp); }
 }
-// 异步原子写 + 备份轮转（state 文件：保留最近 3 份 .bak1=最新备份 … .bak3=最旧）
-// 关键：Windows rename 不覆盖已存在文件，必须「从最旧往前腾位」（先删 bak3 → bak2→bak3 → bak1→bak2 → file→bak1）
-function saveStateFile(file, data, cb) {
+
+// —— SQLite 存储（node:sqlite 内置，零依赖；v1.2）——
+let DB = null;
+const DB_FILE = path.join(DATA_DIR, "trade-toolbox.db");
+function initDb() {
+  try {
+    const { DatabaseSync } = require("node:sqlite");
+    DB = new DatabaseSync(DB_FILE);
+    DB.exec("PRAGMA journal_mode=WAL;");
+    DB.exec(`
+      CREATE TABLE IF NOT EXISTS users (
+        username TEXT PRIMARY KEY,
+        salt TEXT NOT NULL DEFAULT '',
+        hash TEXT NOT NULL DEFAULT '',
+        iter INTEGER NOT NULL DEFAULT 10000,
+        pwdVersion INTEGER NOT NULL DEFAULT 1,
+        displayName TEXT NOT NULL DEFAULT '',
+        createdAt TEXT NOT NULL DEFAULT '',
+        role TEXT NOT NULL DEFAULT 'user'
+      );
+      CREATE TABLE IF NOT EXISTS user_state (
+        username TEXT PRIMARY KEY,
+        data TEXT NOT NULL,
+        updated_at INTEGER NOT NULL DEFAULT 0
+      );
+    `);
+    rotateDbBackup();
+    migrateLegacyData();
+    return true;
+  } catch (e) {
+    console.error("[WARN] SQLite 不可用，回退 JSON 文件存储:", e.message);
+    return false;
+  }
+}
+const USE_SQLITE = initDb();
+
+// 启动时对 .db 做 3 档轮转备份（trade-toolbox.db.bak1=最新 … .bak3=最旧）
+function rotateDbBackup() {
+  try {
+    if (!fs.existsSync(DB_FILE)) return;
+    fs.rmSync(DB_FILE + ".bak3", { force: true });
+    if (fs.existsSync(DB_FILE + ".bak2")) fs.renameSync(DB_FILE + ".bak2", DB_FILE + ".bak3");
+    if (fs.existsSync(DB_FILE + ".bak1")) fs.renameSync(DB_FILE + ".bak1", DB_FILE + ".bak2");
+    fs.copyFileSync(DB_FILE, DB_FILE + ".bak1");
+  } catch (e) { /* 只读目录忽略 */ }
+}
+
+// 旧版 JSON 文件 → SQLite 一次性迁移（仅当库为空；旧文件保留作备份）
+function migrateLegacyData() {
+  try {
+    const uc = DB.prepare("SELECT COUNT(*) c FROM users").get().c;
+    const sc = DB.prepare("SELECT COUNT(*) c FROM user_state").get().c;
+    if (uc === 0 && fs.existsSync(USERS_FILE)) {
+      const users = JSON.parse(fs.readFileSync(USERS_FILE, "utf8"));
+      const ins = DB.prepare("INSERT OR REPLACE INTO users (username, salt, hash, iter, pwdVersion, displayName, createdAt, role) VALUES (?,?,?,?,?,?,?,?)");
+      for (const [u, d] of Object.entries(users)) ins.run(u, d.salt || "", d.hash || "", Number(d.iter) || LEGACY_ITER, Number(d.pwdVersion) || 1, d.displayName || "", d.createdAt || "", d.role || "user");
+      console.log("[migrate] users.json → SQLite");
+    }
+    if (sc === 0) {
+      const files = fs.readdirSync(DATA_DIR).filter((f) => f.endsWith(".json") && f !== "users.json" && !f.includes(".bak") && !f.startsWith("."));
+      const ins = DB.prepare("INSERT OR REPLACE INTO user_state (username, data, updated_at) VALUES (?,?,?)");
+      let n = 0;
+      for (const f of files) {
+        try { ins.run(f.replace(/\.json$/, ""), fs.readFileSync(path.join(DATA_DIR, f), "utf8"), Date.now()); n++; } catch (e) { /* ignore */ }
+      }
+      if (n) console.log(`[migrate] ${n} 个用户状态文件 → SQLite`);
+    }
+  } catch (e) { console.error("[migrate] 迁移失败:", e.message); }
+}
+
+function userStateFilePath(username) {
+  return path.join(DATA_DIR, String(username).replace(/[^A-Za-z0-9_.\-一-龥]/g, "_") + ".json");
+}
+// 用户状态写（SQLite 事务性原子；回退为 JSON 文件）
+function saveStateFile(username, data, cb) {
+  if (USE_SQLITE) {
+    try {
+      DB.prepare("INSERT INTO user_state (username, data, updated_at) VALUES (?,?,?) ON CONFLICT(username) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at").run(username, String(data), Date.now());
+      return cb(null);
+    } catch (e) { return cb(e); }
+  }
+  const file = userStateFilePath(username);
   const tmp = file + ".tmp-" + process.pid + "-" + Date.now();
   fs.writeFile(tmp, data, (err) => {
     if (err) return cb(err);
-    const put = (e) => { if (e) return cb(e); fs.rename(tmp, file, (e2) => cb(e2 || null)); };
-    fs.stat(file, (statErr) => {
-      if (statErr) return put(null); // 无旧文件 → 直接写入
-      // 先删最旧的 bak3 腾出位置
-      fs.unlink(file + ".bak3", () => {
-        const shift = (n) => { // n: 把第 n-1 档移入第 n 档（n=3→bak2入bak3 … n=1→file入bak1），最后 n=0 放新文件
-          if (n < 1) return put(null);
-          const to = n === 3 ? file + ".bak3" : file + ".bak" + n;
-          const from = n === 1 ? file : file + ".bak" + (n - 1);
-          fs.rename(from, to, (e) => {
-            if (e && e.code !== "ENOENT") return cb(e);
-            shift(n - 1);
-          });
-        };
-        shift(3);
-      });
-    });
+    fs.rename(tmp, file, (e) => cb(e || null));
   });
+}
+function readUserState(username) {
+  if (USE_SQLITE) {
+    try {
+      const r = DB.prepare("SELECT data FROM user_state WHERE username=?").get(username);
+      return r ? String(r.data) : "{}";
+    } catch (e) { return "{}"; }
+  }
+  const file = userStateFilePath(username);
+  try { return fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "{}"; } catch (e) { return "{}"; }
+}
+function deleteUserData(username) {
+  if (USE_SQLITE) {
+    try { DB.prepare("DELETE FROM user_state WHERE username=?").run(username); } catch (e) { /* ignore */ }
+  }
+  try { const file = userStateFilePath(username); fs.rmSync(file, { force: true }); for (let i = 1; i <= 3; i++) fs.rmSync(file + ".bak" + i, { force: true }); } catch (e) { /* ignore */ }
 }
 
 // —— 用户账号 ——
 function loadUsers() {
-  let users;
-  try { users = JSON.parse(fs.readFileSync(USERS_FILE, "utf8")); } catch (e) { return {}; }
+  const users = {};
+  if (USE_SQLITE) {
+    try {
+      const rows = DB.prepare("SELECT * FROM users").all();
+      for (const r of rows) users[r.username] = { salt: r.salt, hash: r.hash, iter: r.iter, pwdVersion: r.pwdVersion, displayName: r.displayName, createdAt: r.createdAt, role: r.role };
+    } catch (e) { /* ignore */ }
+  } else {
+    try { Object.assign(users, JSON.parse(fs.readFileSync(USERS_FILE, "utf8"))); } catch (e) { /* ignore */ }
+  }
   let changed = false, hasAdmin = false;
   for (const n of Object.keys(users)) {
     if (!users[n].role) { users[n].role = "user"; changed = true; }
@@ -174,11 +260,32 @@ function loadUsers() {
   }
   // 兼容存量：无管理员时把第一个用户提升（注册已用随机邀请码保护，见 COMMERCIALIZATION.md）
   if (!hasAdmin && Object.keys(users).length) { users[Object.keys(users)[0]].role = "admin"; changed = true; }
-  if (changed) { try { atomicWriteSync(USERS_FILE, JSON.stringify(users, null, 2)); } catch (e) { /* ignore */ } }
+  if (changed) saveUsers(users);
   return users;
 }
 function saveUsers(users) {
-  atomicWriteSync(USERS_FILE, JSON.stringify(users, null, 2));
+  if (USE_SQLITE) {
+    try {
+      const upsert = DB.prepare("INSERT OR REPLACE INTO users (username, salt, hash, iter, pwdVersion, displayName, createdAt, role) VALUES (?,?,?,?,?,?,?,?)");
+      for (const [u, d] of Object.entries(users)) upsert.run(u, d.salt || "", d.hash || "", Number(d.iter) || LEGACY_ITER, Number(d.pwdVersion) || 1, d.displayName || "", d.createdAt || "", d.role || "user");
+    } catch (e) { console.error("[DB] saveUsers 失败:", e.message); }
+  } else {
+    atomicWriteSync(USERS_FILE, JSON.stringify(users, null, 2));
+  }
+}
+// 删除单个用户账号（从 users 表移除）
+function deleteUserRecord(username) {
+  if (USE_SQLITE) {
+    try { DB.prepare("DELETE FROM users WHERE username=?").run(username); } catch (e) { /* ignore */ }
+  }
+  // 回退路径也尝试从 users.json 删除
+  if (!USE_SQLITE) {
+    try {
+      const users = loadUsers();
+      delete users[username];
+      saveUsers(users);
+    } catch (e) { /* ignore */ }
+  }
 }
 function isAdmin(username) {
   const u = loadUsers()[username];
@@ -308,13 +415,15 @@ const handler = (req, res) => {
       // adminAccount：登录页显示"试用账号/初始密码"提示（仅提示，密码本身不存储，靠 TRIAL_PASS_HINT 或默认）
       const users = loadUsers();
       const adminName = Object.keys(users).find((n) => users[n].role === "admin") || "";
+      const me = authUser(req);
+      const isAdminReq = !!(me && me.role === "admin");
       json(res, 200, {
         ...st,
         userCount: userCount(),
         // adminAccount：登录页提示试用管理员账号名（密码是注册时自己设置的，不提示）
         adminAccount: { username: adminName },
-        // 全新安装（尚无账号）时把注册邀请码直接给登录页，方便首次使用；注册第一个账号后不再暴露
-        registerKey: Object.keys(users).length === 0 ? REGISTER_KEY : undefined,
+        // 注册邀请码：全新安装（尚无账号）或管理员请求时返回；设置页直接显示并可复制
+        registerKey: (Object.keys(users).length === 0 || isAdminReq) ? REGISTER_KEY : undefined,
       });
       return;
     }
@@ -482,7 +591,8 @@ const handler = (req, res) => {
           if (users[key].role === "admin" && Object.values(users).filter((u) => u.role === "admin").length <= 1) { json(res, 400, { error: "不能删除最后一名管理员" }); return; }
           delete users[key];
           saveUsers(users);
-          try { fs.unlinkSync(path.join(DATA_DIR, String(key).replace(/[^A-Za-z0-9_.\-一-龥]/g, "_") + ".json")); } catch (e) { /* 数据文件可能不存在 */ }
+          deleteUserRecord(key); // 从 users 表删除
+          deleteUserData(key); // 从 user_state / 旧 JSON 文件删除
           audit("user.delete", `by=${me.username} target=${key}`);
           json(res, 200, { ok: true });
         } catch (e) { json(res, 500, { error: "删除失败" }); }
@@ -520,18 +630,12 @@ const handler = (req, res) => {
     if (pathname === "/api/state") {
       const me = authUser(req);
       if (!me) { json(res, 401, { error: "未登录" }); return; }
-      const file = path.join(DATA_DIR, String(me.username).replace(/[^A-Za-z0-9_.\-一-龥]/g, "_") + ".json");
       if (method === "GET") {
         const rl = rateLimit(rlKey("state"), "state");
         if (!rl.ok) { json(res, 429, { error: "请求过于频繁" }); return; }
-        // 与写入串行化：等该用户写入队列清空后再读，避免读到备份轮转中间的空窗（旧数据被读成空 → 客户端回写演示数据覆盖真数据）
+        // 与写入串行化，读一致快照；SQLite 事务性原子
         const read = () => new Promise((resolve) => {
-          let raw = "{}";
-          try {
-            if (fs.existsSync(file)) raw = fs.readFileSync(file, "utf8");
-            else if (fs.existsSync(file + ".bak1")) raw = fs.readFileSync(file + ".bak1", "utf8"); // 轮转间隙回退到上一版
-          } catch (e) { /* fallthrough */ }
-          // 校验：损坏/形状不符时返回空对象，绝不把坏数据当权威副本
+          const raw = readUserState(me.username);
           const parsed = parseJsonBody(raw);
           const ok = parsed && ["clients", "quotes", "orders", "products", "hsCodes"].every((k) => Array.isArray(parsed[k]));
           res.writeHead(200, withSecurity({ "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" }));
@@ -553,7 +657,7 @@ const handler = (req, res) => {
           if (!valid) { audit("state.reject", `user=${me.username} 非法负载`); json(res, 400, { error: "数据格式无效，已拒绝保存（你的本地数据未受影响）" }); return; }
           // 按用户串行化写入，避免并发保存时旧数据覆盖新数据
           const write = () => new Promise((resolve) => {
-            saveStateFile(file, body, (err) => {
+            saveStateFile(me.username, body, (err) => {
               if (err) json(res, 500, { error: "保存失败" });
               else json(res, 200, { ok: true });
               resolve();
@@ -582,24 +686,30 @@ const handler = (req, res) => {
           const colls = ["clients", "products", "orders", "quotes", "hsCodes", "colorDict"];
           if (!colls.every((k) => Array.isArray(demoIds[k]))) { json(res, 400, { error: "参数无效" }); return; }
           let cleared = 0;
-          const files = fs.readdirSync(DATA_DIR).filter((f) => f.endsWith(".json") && f !== "users.json" && !f.includes(".bak") && !f.startsWith("."));
-          files.forEach((f) => {
-            const file = path.join(DATA_DIR, f);
-            try {
-              const state = JSON.parse(fs.readFileSync(file, "utf8"));
-              if (!state || typeof state !== "object") return;
-              let changed = false;
-              colls.forEach((k) => {
-                if (!Array.isArray(state[k])) return;
-                const ids = new Set(demoIds[k]);
-                const before = state[k].length;
-                state[k] = state[k].filter((it) => !(it && (it._demo || ids.has(it.id) || ids.has(it.code))));
-                cleared += before - state[k].length;
-                if (before !== state[k].length) changed = true;
-              });
-              if (changed) atomicWriteSync(file, JSON.stringify(state));
-            } catch (e) { /* 跳过无法解析的文件 */ }
-          });
+          const processState = (uname, raw) => {
+            const state = JSON.parse(raw);
+            if (!state || typeof state !== "object") return;
+            let changed = false;
+            colls.forEach((k) => {
+              if (!Array.isArray(state[k])) return;
+              const ids = new Set(demoIds[k]);
+              const before = state[k].length;
+              state[k] = state[k].filter((it) => !(it && (it._demo || ids.has(it.id) || ids.has(it.code))));
+              cleared += before - state[k].length;
+              if (before !== state[k].length) changed = true;
+            });
+            if (changed) {
+              if (USE_SQLITE) DB.prepare("UPDATE user_state SET data=? WHERE username=?").run(JSON.stringify(state), uname);
+              else atomicWriteSync(userStateFilePath(uname), JSON.stringify(state));
+            }
+          };
+          if (USE_SQLITE) {
+            const rows = DB.prepare("SELECT username, data FROM user_state").all();
+            for (const row of rows) { try { processState(row.username, row.data); } catch (e) { /* 跳过损坏数据 */ } }
+          } else {
+            const files = fs.readdirSync(DATA_DIR).filter((f) => f.endsWith(".json") && f !== "users.json" && !f.includes(".bak") && !f.startsWith("."));
+            files.forEach((f) => { try { processState(f.replace(/\.json$/, ""), fs.readFileSync(path.join(DATA_DIR, f), "utf8")); } catch (e) { /* ignore */ } });
+          }
           audit("demo.clear", `by=${me.username} 清除演示数据 ${cleared} 条`);
           json(res, 200, { ok: true, cleared });
         } catch (e) { json(res, 500, { error: "操作失败" }); }

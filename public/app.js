@@ -3220,11 +3220,24 @@ async function renderLicenseStatus() {
   const statusEl = $("#licenseStatus");
   if (!statusEl) return;
   try {
-    const r = await fetch("api/license", { cache: "no-store" });
+    const r = await fetch("api/license", { cache: "no-store", headers: auth.token ? { Authorization: "Bearer " + auth.token } : {} });
     const d = await r.json();
     if (!r.ok) { statusEl.innerHTML = `<span class="cell-sub">无法获取授权状态：${esc(d.error || "未知错误")}</span>`; return; }
     const mcEl = $("#licenseMachine");
     if (mcEl) mcEl.innerHTML = `机器码：<code>${esc(d.machine || "-")}</code>`;
+    // 注册邀请码：管理员可见并可一键复制
+    const rkEl = $("#licenseRegKey");
+    const rkCodeEl = $("#licenseRegKeyCode");
+    if (rkEl && rkCodeEl) {
+      if (d.registerKey) {
+        rkEl.style.display = "";
+        rkCodeEl.textContent = d.registerKey;
+      } else {
+        rkEl.style.display = "none";
+      }
+    }
+    const copyRkBtn = $("#copyRegKeyBtn");
+    if (copyRkBtn) copyRkBtn.onclick = () => { if (d.registerKey) { copyText(d.registerKey); toast("注册邀请码已复制"); } };
     const daysToExpiry = d.expires ? Math.ceil((Date.parse(d.expires) - Date.now()) / (24 * 3600 * 1000)) : Infinity;
     if (d.mode === "licensed") {
       if (isFinite(daysToExpiry) && daysToExpiry <= 3) {

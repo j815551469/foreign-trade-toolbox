@@ -581,7 +581,7 @@
               <div class="data-actions">
                 <button class="btn" id="logoutBtn"><i data-lucide="log-out"></i><span>退出登录</span></button>
               </div>
-              <div class="hint">通过部署服务器访问时需登录；每个业务员的数据相互独立。双击本地打开 index.html 则不登录、数据仅存本机。</div>
+              <div class="hint">通过部署服务器访问时需登录；每个业务员的数据相互独立。</div>
               <div class="hint" id="appVersionInfo">系统版本：--</div>
             </div>
             <div class="panel" id="userManagePanel" style="display:none;">
@@ -597,7 +597,8 @@
                 <button class="btn" id="activateLicenseBtn"><i data-lucide="key-round"></i><span>激活</span></button>
               </div>
               <div class="hint" id="licenseMachine">机器码：<code>-</code></div>
-              <div class="hint">试用到期后需激活授权才能继续使用；正式授权按授权码席位限制注册人数。首次运行自动生成随机注册邀请码，见服务器控制台或 data/register-key.txt。</div>
+              <div class="hint" id="licenseRegKey" style="display:none">注册邀请码：<code id="licenseRegKeyCode">-</code> <button class="copybtn" id="copyRegKeyBtn">复制</button></div>
+              <div class="hint">试用到期后需激活授权才能继续使用；正式授权按授权码席位限制注册人数。</div>
             </div>
           </div>
         </section>
