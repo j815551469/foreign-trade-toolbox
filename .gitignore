@@ -7,6 +7,11 @@ users.json
 # 授权签发私钥（绝不上传）
 tools/private.pem
 
+# SEA 构建产物与签发输出（exe 91MB 不入库）
+tools/sea-prep.blob
+tools/授权签发工具.exe
+tools/授权码.txt
+
 # Serena 项目文件
 .serena/
 
