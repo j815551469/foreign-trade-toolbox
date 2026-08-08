@@ -309,7 +309,13 @@ const handler = (req, res) => {
       const users = loadUsers();
       const adminName = Object.keys(users).find((n) => users[n].role === "admin") || "";
       const passHint = String(process.env.TRIAL_PASS_HINT || "admin123");
-      json(res, 200, { ...st, userCount: userCount(), adminAccount: { username: adminName, passHint } });
+      json(res, 200, {
+        ...st,
+        userCount: userCount(),
+        adminAccount: { username: adminName, passHint },
+        // 全新安装（尚无账号）时把注册邀请码直接给登录页，方便首次使用；注册第一个账号后不再暴露
+        registerKey: Object.keys(users).length === 0 ? REGISTER_KEY : undefined,
+      });
       return;
     }
     if (pathname === "/api/license" && method === "POST") {
