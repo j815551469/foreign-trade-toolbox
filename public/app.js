@@ -3168,30 +3168,6 @@ function renderDocTemplate(type, data) {
   return sanitizeHtml(renderTemplateHtml(docTemplateHtml(type), data));
 }
 
-// —— 单据模板编辑器（基础版：编辑当前单据类型的模板 HTML）——
-function openDocTemplateEditor() {
-  const type = $("#docGenType").value;
-  const name = DOC_GENERATORS[type] ? DOC_GENERATORS[type].name : type;
-  openModal(`
-    <div class="modal modal-doc-tpl">
-      <div class="modal-head"><h3>编辑模板：${esc(name)}</h3><button class="icon-btn" id="modalCloseBtn"><i data-lucide="x"></i></button></div>
-      <div class="hint" style="padding:0 0 10px">可用变量：{{docDate}} {{docGoodsRows}}（含单价金额行）{{docGoodsRowsPlain}}（无价行）{{docAmount}} {{docAmountWords}} {{docCompany}} {{docBuyer}} {{docPayment}} {{docDelivery}} {{docValidity}} {{docTerms}} {{docPort}} {{docVessel}} {{docMarks}} {{docNotes}} 等。保存后生成 PDF 自动生效；不确定时先用「文本预览」核对。</div>
-      <textarea id="docTplInput" class="doc-tpl-editor" spellcheck="false"></textarea>
-      <div class="modal-actions"><button class="btn" id="modalCancelBtn">取消</button><button class="btn primary" id="docTplSaveBtn"><i data-lucide="save"></i><span>保存模板</span></button></div>
-    </div>`);
-  $("#docTplInput").value = docTemplateHtml(type);
-  $("#docTplSaveBtn")?.addEventListener("click", saveDocTemplate);
-  $("#docTplInput")?.focus();
-}
-function saveDocTemplate() {
-  const type = $("#docGenType").value;
-  const val = ($("#docTplInput") && $("#docTplInput").value) || "";
-  state.docTemplates = state.docTemplates || {};
-  state.docTemplates[type] = val;
-  saveState();
-  closeModal();
-  toast("模板已保存（生成 PDF 时自动生效）");
-}
 
 async function captureTemplatePage(type, data) {
   if (!window.html2canvas) throw new Error("html2canvas not loaded");
@@ -4982,7 +4958,6 @@ function init() {
     }
   });
   $("#genDocBtn").addEventListener("click", genDoc);
-  $("#docTplEditBtn")?.addEventListener("click", openDocTemplateEditor);
   $("#genDocPdfBtn").addEventListener("click", () => genDocPdf($("#docGenType").value));
   $("#printDocBtn").addEventListener("click", printDoc);
   $("#docHistoryClearBtn").addEventListener("click", () => {
