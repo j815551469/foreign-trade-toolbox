@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>外贸业务员工具箱</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <span class="brand-mark" data-lucide="anchor"></span>
+        <div>
+          <strong>外贸工具箱</strong>
+          <small>Trade Desk</small>
+        </div>
+      </div>
+      <nav class="nav" id="nav">
+        <button class="nav-item active" data-section="dashboard"><i data-lucide="layout-dashboard"></i><span>工作台</span></button>
+        <div class="nav-group">业务工具</div>
+        <button class="nav-item" data-section="quote"><i data-lucide="calculator"></i><span>报价计算器</span></button>
+        <button class="nav-item" data-section="products"><i data-lucide="package"></i><span>产品资料</span></button>
+        <button class="nav-item" data-section="logistics"><i data-lucide="container"></i><span>物流与装柜</span></button>
+        <button class="nav-item" data-section="currency"><i data-lucide="refresh-ccw"></i><span>汇率换算</span></button>
+        <button class="nav-item" data-section="unit"><i data-lucide="ruler"></i><span>单位换算</span></button>
+        <button class="nav-item" data-section="timezone"><i data-lucide="globe-2"></i><span>时区助手</span></button>
+        <div class="nav-group">客户与订单</div>
+        <button class="nav-item" data-section="clients"><i data-lucide="users"></i><span>客户管理</span></button>
+        <button class="nav-item" data-section="quotes"><i data-lucide="file-text"></i><span>报价记录</span></button>
+        <button class="nav-item" data-section="orders"><i data-lucide="clipboard-list"></i><span>订单管理</span></button>
+        <div class="nav-group">资料库</div>
+        <button class="nav-item" data-section="email"><i data-lucide="mail"></i><span>邮件模板</span></button>
+        <button class="nav-item" data-section="terms"><i data-lucide="book-open"></i><span>贸易术语</span></button>
+        <button class="nav-item" data-section="countries"><i data-lucide="map-pin"></i><span>国家市场</span></button>
+        <button class="nav-item" data-section="hs"><i data-lucide="search-code"></i><span>HS 编码</span></button>
+        <button class="nav-item" data-section="glossary"><i data-lucide="languages"></i><span>外贸英语</span></button>
+        <button class="nav-item" data-section="docs"><i data-lucide="clipboard-check"></i><span>单证清单</span></button>
+        <div class="nav-group">系统</div>
+        <button class="nav-item" data-section="settings"><i data-lucide="settings"></i><span>设置与数据</span></button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="local-time" id="sidebarTime"></div>
+      </div>
+    </aside>
+
+    <div class="overlay" id="overlay"></div>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="icon-btn" id="menuBtn" aria-label="打开菜单"><i data-lucide="menu"></i></button>
+        <div class="page-heading">
+          <h1 id="pageTitle">工作台</h1>
+          <p id="pageSubtitle">今日外贸业务一览</p>
+        </div>
+        <div class="top-actions">
+          <span class="today-badge" id="todayBadge"></span>
+          <button class="btn primary" id="quickQuoteBtn"><i data-lucide="plus"></i><span>新建报价</span></button>
+        </div>
+      </header>
+
+      <div class="content" id="content">
+        <section id="section-dashboard" class="section active" data-title="工作台" data-subtitle="今日外贸业务一览">
+          <div class="stat-grid" id="dashStats"></div>
+          <div class="dash-grid">
+            <div class="panel">
+              <div class="panel-head">
+                <h3>待跟进客户</h3>
+                <button class="link-btn" data-goto="clients">查看全部</button>
+              </div>
+              <div id="dashFollowups" class="stack-list"></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head">
+                <h3>最近报价</h3>
+                <button class="link-btn" data-goto="quotes">查看全部</button>
+              </div>
+              <div id="dashQuotes" class="stack-list"></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head">
+                <h3>最近订单</h3>
+                <button class="link-btn" data-goto="orders">查看全部</button>
+              </div>
+              <div id="dashOrders" class="stack-list"></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head">
+                <h3>订单交期提醒</h3>
+                <button class="link-btn" data-goto="orders">查看全部</button>
+              </div>
+              <div id="dashDeliveries" class="stack-list"></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head">
+                <h3>待催报价</h3>
+                <button class="link-btn" data-goto="quotes">查看全部</button>
+              </div>
+              <div id="dashStaleQuotes" class="stack-list"></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><h3>全球时间</h3></div>
+              <div id="dashClocks" class="clock-grid"></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><h3>常用工具</h3></div>
+              <div class="tool-grid">
+                <button class="tool-chip" data-goto="quote"><i data-lucide="calculator"></i><span>报价计算</span></button>
+                <button class="tool-chip" data-goto="logistics"><i data-lucide="container"></i><span>装柜计算</span></button>
+                <button class="tool-chip" data-goto="currency"><i data-lucide="refresh-ccw"></i><span>汇率换算</span></button>
+                <button class="tool-chip" data-goto="timezone"><i data-lucide="globe-2"></i><span>客户时区</span></button>
+                <button class="tool-chip" data-goto="email"><i data-lucide="mail"></i><span>邮件模板</span></button>
+                <button class="tool-chip" data-goto="docs"><i data-lucide="clipboard-check"></i><span>单证清单</span></button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="section-quote" class="section" data-title="报价计算器" data-subtitle="按成交方式快速核算 FOB / CIF 等价格">
+          <div class="tool-layout">
+            <div class="panel">
+              <div class="panel-head"><h3>成本与报价参数</h3></div>
+              <div class="form-grid">
+                <label>关联产品<select id="qProductSelect"><option value="">手动填写</option></select></label>
+                <label>报价币种<select id="qCurrency"><option value="USD">USD</option><option value="EUR">EUR</option><option value="CNY">CNY</option></select></label>
+                <label>产品名称<input id="qProduct" placeholder="输入型号/品名从产品库选（自动填英文名）"></label>
+                <label>成交方式<select id="qIncoterm">
+                  <option value="EXW">EXW</option>
+                  <option value="FOB" selected>FOB</option>
+                  <option value="CFR">CFR</option>
+                  <option value="CIF">CIF</option>
+                </select></label>
+                <label>出厂成本（RMB/件）<input id="qCost" type="number" value="12" step="0.01"></label>
+                <label>包装成本（RMB/件）<input id="qPack" type="number" value="1.2" step="0.01"></label>
+                <label>港前杂费（RMB/件）<input id="qDomestic" type="number" value="0.8" step="0.01"></label>
+                <label>出口退税率（%）<input id="qRebate" type="number" value="10" step="0.1"></label>
+                <label>目标利润率（%）<input id="qMargin" type="number" value="15" step="0.1"></label>
+                <label>佣金比例（%）<input id="qCommission" type="number" value="3" step="0.1" min="0" max="99.9"></label>
+                <label>银行手续费（RMB/件）<input id="qBank" type="number" value="0.15" step="0.01"></label>
+                <label>其他杂费（RMB/件）<input id="qOther" type="number" value="0.2" step="0.01"></label>
+                <label>数量（件）<input id="qQty" type="number" value="1000" step="1"></label>
+                <label>汇率（CNY/报价币）<input id="qRate" type="number" value="7.2" step="0.01"></label>
+                <label>海运费总计（报价币）<input id="qFreight" type="number" value="900" step="1"></label>
+                <label>保险费率（%）<input id="qInsurance" type="number" value="0.3" step="0.01"></label>
+                <label>目标价反推（报价币/件）<input id="qTargetPrice" type="number" step="0.01" placeholder="可选"></label>
+              </div>
+              <div id="quoteTermsHint" class="terms-hint"></div>
+              <div class="btn-row">
+                <button class="btn primary" id="calcQuoteBtn"><i data-lucide="play"></i><span>计算报价</span></button>
+                <button class="btn" id="reverseQuoteBtn"><i data-lucide="target"></i><span>按目标价反推</span></button>
+                <button class="btn" id="qFreightFromLogisticsBtn"><i data-lucide="truck"></i><span>从物流带入运费</span></button>
+                <button class="btn" id="qRefreshRateBtn"><i data-lucide="refresh-cw"></i><span>取最新汇率</span></button>
+                <button class="btn" id="saveQuoteBtn"><i data-lucide="save"></i><span>保存为报价记录</span></button>
+                <button class="btn" id="copyQuoteSummaryBtn"><i data-lucide="copy"></i><span>复制报价摘要</span></button>
+              </div>
+              <div id="quoteSavedHint" class="quote-saved-hint"></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><h3>计算结果</h3></div>
+              <div id="quoteResult" class="result-grid"></div>
+              <div id="quoteBreakdown" class="breakdown"></div>
+              <div id="quoteCostTable" class="cost-table-wrap"></div>
+              <div id="quoteCompareTable" class="cost-table-wrap"></div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>各成交方式填写说明</h3></div>
+            <div id="quoteTermGuide" class="table-wrap"></div>
+          </div>
+        </section>
+
+        <section id="section-products" class="section" data-title="产品资料" data-subtitle="维护产品、包装、成本与 HS 编码">
+          <div class="section-toolbar">
+            <input id="productSearch" class="search-input" placeholder="搜索型号 / 品名 / HS 编码">
+            <div class="toolbar-actions">
+              <button class="btn" id="exportProductsBtn"><i data-lucide="download"></i><span>导出 CSV</span></button>
+              <button class="btn primary" id="addProductBtn"><i data-lucide="plus"></i><span>新增产品</span></button>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="table-wrap"><table class="data-table" id="productTable"></table></div>
+          </div>
+        </section>
+
+        <section id="section-logistics" class="section" data-title="物流与装柜" data-subtitle="多货物装柜方案、集装箱利用率和运费对比">
+          <div class="tool-layout">
+            <div class="panel">
+              <div class="panel-head">
+                <h3>货物清单</h3>
+                <button class="btn ghost" id="addLogisticsItemBtn"><i data-lucide="plus"></i><span>新增货物</span></button>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table" id="logisticsItemsTable">
+                  <thead><tr><th>货物名称</th><th>长 cm</th><th>宽 cm</th><th>高 cm</th><th>毛重 kg</th><th>箱数</th><th>小计 m³</th><th class="actions">操作</th></tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+              <div class="btn-row">
+                <button class="btn primary" id="calcLogisticsBtn"><i data-lucide="play"></i><span>计算装柜方案</span></button>
+                <button class="btn" id="copyLogisticsPlanBtn"><i data-lucide="copy"></i><span>复制方案</span></button>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><h3>货物汇总</h3></div>
+              <div id="logisticsResult" class="result-grid"></div>
+              <div id="logisticsSummary" class="logistics-summary"></div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>装柜方案</h3><span class="hint">按体积 / 重量 / 可装箱数综合估算</span></div>
+            <div id="containerTable" class="table-wrap"></div>
+            <div id="containerCalcResult" class="result-grid"></div>
+            <div id="containerPlan" class="container-plan"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>运费对比</h3><span class="hint">拼箱 / 整柜 / 空运 / 快递</span></div>
+            <div class="form-grid">
+              <label>参考航线<select id="frRoute"></select></label>
+              <label>海运拼箱单价（USD/CBM）<input id="frRate" type="number" value="28" step="0.01"></label>
+              <label>币种<select id="frCurrency">
+                <option value="USD">USD</option>
+                <option value="CNY">CNY</option>
+                <option value="EUR">EUR</option>
+              </select></label>
+              <label>附加费（同币种）<input id="frSurcharge" type="number" value="0" step="0.01"></label>
+            </div>
+            <div class="btn-row"><button class="btn primary" id="calcFreightBtn"><i data-lucide="play"></i><span>计算运费对比</span></button></div>
+            <div id="freightResult" class="result-grid"></div>
+            <div id="freightCompare" class="freight-compare"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>参考运价</h3><button class="btn ghost" id="logisticsSettingsBtn"><i data-lucide="settings-2"></i><span>设置</span></button></div>
+            <div id="logisticsRateTable" class="table-wrap"></div>
+            <div class="hint">运价随燃油附加费、旺季、汇率和货量波动，仅用于快速估算，实际请以货代 / 快递公司报价为准。</div>
+          </div>
+        </section>
+
+        <section id="section-currency" class="section" data-title="汇率换算" data-subtitle="常用币种速查与可编辑汇率表">
+          <div class="tool-layout">
+            <div class="panel">
+              <div class="panel-head">
+                <h3>汇率换算</h3>
+                <button class="btn ghost" id="refreshRatesBtn"><i data-lucide="refresh-cw"></i><span>在线更新</span></button>
+              </div>
+              <div class="converter-box">
+                <label>金额<input id="curAmount" type="number" value="100" step="0.01"></label>
+                <div class="converter-row">
+                  <select id="curFrom"></select>
+                  <button class="icon-btn" id="swapCurBtn" aria-label="交换币种"><i data-lucide="arrow-left-right"></i></button>
+                  <select id="curTo"></select>
+                </div>
+                <div id="curResult" class="converter-result"></div>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><h3>汇率速查表</h3><span class="hint" id="rateUpdatedHint">1 USD = ?</span></div>
+              <div id="rateTable" class="rate-grid"></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="section-unit" class="section" data-title="单位换算" data-subtitle="长度、重量、体积、面积与温度">
+          <div class="tool-layout">
+            <div class="panel">
+              <div class="panel-head"><h3>单位换算</h3></div>
+              <div class="form-grid">
+                <label>类别<select id="unitCat"></select></label>
+                <label>数值<input id="unitValue" type="number" value="1" step="any"></label>
+                <label>从<select id="unitFrom"></select></label>
+                <label>到<select id="unitTo"></select></label>
+              </div>
+              <div class="btn-row"><button class="btn primary" id="calcUnitBtn"><i data-lucide="play"></i><span>换算</span></button></div>
+              <div id="unitResult" class="converter-result"></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><h3>常用外贸换算</h3></div>
+              <div class="quick-conv">
+                <div><span>1 英寸</span><strong>2.54 cm</strong></div>
+                <div><span>1 英尺</span><strong>30.48 cm</strong></div>
+                <div><span>1 磅</span><strong>0.4536 kg</strong></div>
+                <div><span>1 立方英尺</span><strong>0.02832 m³</strong></div>
+                <div><span>1 美制加仑</span><strong>3.785 L</strong></div>
+                <div><span>1 吨</span><strong>1000 kg</strong></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="section-timezone" class="section" data-title="时区助手" data-subtitle="客户工作时间与本地时间对照">
+          <div class="tool-layout">
+            <div class="panel">
+              <div class="panel-head"><h3>城市时间</h3></div>
+              <div class="form-grid">
+                <label>我的城市<select id="tzMine"></select></label>
+                <label>客户城市<select id="tzClient"></select></label>
+                <label>我的工作时间<input id="tzMyStart" type="time" value="09:00"></label>
+                <label>我的下班时间<input id="tzMyEnd" type="time" value="18:00"></label>
+              </div>
+              <div class="btn-row"><button class="btn primary" id="calcTzBtn"><i data-lucide="play"></i><span>对照时间</span></button></div>
+              <div id="tzResult" class="tz-result"></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><h3>常用客户城市</h3></div>
+              <div id="tzCities" class="city-grid"></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="section-clients" class="section" data-title="客户管理" data-subtitle="客户档案、跟进日期与状态管理">
+          <div class="section-toolbar">
+            <input id="clientSearch" class="search-input" placeholder="搜索客户 / 公司 / 国家">
+            <select id="clientFilter" class="filter-select"></select>
+            <select id="clientLevelFilter" class="filter-select"></select>
+            <select id="clientSourceFilter" class="filter-select"></select>
+            <div class="toolbar-actions">
+              <button class="btn" id="importClientsBtn"><i data-lucide="upload"></i><span>导入 CSV</span></button>
+              <input type="file" id="clientImportFile" accept=".csv" hidden>
+              <button class="btn" id="exportClientsBtn"><i data-lucide="download"></i><span>导出 CSV</span></button>
+              <button class="btn primary" id="addClientBtn"><i data-lucide="user-plus"></i><span>新增客户</span></button>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="table-wrap"><table class="data-table" id="clientTable"></table></div>
+          </div>
+        </section>
+
+        <section id="section-quotes" class="section" data-title="报价记录" data-subtitle="已保存报价与订单状态跟进">
+          <div class="section-toolbar">
+            <input id="quoteSearch" class="search-input" placeholder="搜索产品 / 客户">
+            <select id="quoteFilter" class="filter-select"></select>
+            <div class="toolbar-actions">
+              <button class="btn" id="exportQuotesBtn"><i data-lucide="download"></i><span>导出 CSV</span></button>
+              <button class="btn primary" id="addQuoteBtn"><i data-lucide="plus"></i><span>手动新增</span></button>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="table-wrap"><table class="data-table" id="quoteTable"></table></div>
+          </div>
+        </section>
+
+        <section id="section-orders" class="section" data-title="订单管理" data-subtitle="从 PO 到发货、到港的订单全流程">
+          <div class="section-toolbar">
+            <input id="orderSearch" class="search-input" placeholder="搜索订单号 / 客户 / 产品">
+            <select id="orderFilter" class="filter-select"></select>
+            <div class="toolbar-actions">
+              <button class="btn" id="colorDictBtn"><i data-lucide="palette"></i><span>颜色字典</span></button>
+              <button class="btn" id="exportOrdersBtn"><i data-lucide="download"></i><span>导出 CSV</span></button>
+              <button class="btn primary" id="addOrderBtn"><i data-lucide="plus"></i><span>新增订单</span></button>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="table-wrap"><table class="data-table" id="orderTable"></table></div>
+          </div>
+        </section>
+
+        <section id="section-email" class="section" data-title="邮件模板" data-subtitle="开发信、报价、催款、发货等常用英文邮件">
+          <div class="tool-layout">
+            <div class="panel">
+              <div class="panel-head"><h3>选择模板</h3></div>
+              <select id="emailCategory" class="full"></select>
+              <div id="emailTemplateList" class="template-list"></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><h3>邮件变量</h3></div>
+              <div class="email-src-selects">
+                <select id="emailSrcClient" class="full"><option value="">选择客户带入变量</option></select>
+                <select id="emailSrcQuote" class="full"><option value="">选择报价带入变量</option></select>
+                <select id="emailSrcOrder" class="full"><option value="">选择订单带入变量</option></select>
+              </div>
+              <div id="emailVars" class="form-grid"></div>
+              <div class="btn-row"><button class="btn" id="applyVarsBtn"><i data-lucide="wand-2"></i><span>填充到邮件</span></button></div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-head">
+              <h3>邮件内容</h3>
+              <div class="toolbar-actions">
+                <button class="btn ghost" id="saveCustomTemplateBtn"><i data-lucide="save"></i><span>保存自定义</span></button>
+                <button class="btn" id="sendEmailBtn"><i data-lucide="send"></i><span>邮件客户端发送</span></button>
+                <button class="btn primary" id="copyEmailBtn"><i data-lucide="copy"></i><span>复制</span></button>
+              </div>
+            </div>
+            <label class="email-subject-row">主题<input id="emailSubject" placeholder="邮件主题"></label>
+            <textarea id="emailContent" class="email-textarea" spellcheck="false"></textarea>
+            <div id="emailTips" class="tips"></div>
+          </div>
+        </section>
+
+        <section id="section-terms" class="section" data-title="贸易术语" data-subtitle="Incoterms 2020 与常用付款方式">
+          <div id="incotermGrid" class="incoterm-grid"></div>
+          <div class="panel">
+            <div class="panel-head"><h3>常用付款方式</h3></div>
+            <div id="paymentTable" class="table-wrap"></div>
+          </div>
+        </section>
+
+        <section id="section-countries" class="section" data-title="国家市场" data-subtitle="主要市场的货币、时区、礼仪与付款习惯">
+          <div class="tool-layout">
+            <div class="panel">
+              <div class="panel-head"><h3>选择市场</h3></div>
+              <input id="countrySearch" class="search-input" placeholder="搜索国家">
+              <div id="countryList" class="country-list"></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><h3>市场资料</h3></div>
+              <div id="countryDetail" class="country-detail"></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="section-hs" class="section" data-title="HS 编码速查" data-subtitle="常见出口品类海关编码参考">
+          <div class="panel">
+            <div class="section-toolbar">
+              <input id="hsSearch" class="search-input" placeholder="搜索编码 / 品类 / 关键词">
+              <select id="hsFilter" class="filter-select"></select>
+              <div class="toolbar-actions">
+                <button class="btn" id="importHsBtn"><i data-lucide="upload"></i><span>导入 CSV</span></button>
+                <input type="file" id="hsImportFile" accept=".csv" hidden>
+                <button class="btn" id="exportHsBtn"><i data-lucide="download"></i><span>导出 CSV</span></button>
+                <button class="btn" id="resetHsBtn"><i data-lucide="rotate-ccw"></i><span>恢复内置</span></button>
+                <button class="btn primary" id="addHsBtn"><i data-lucide="plus"></i><span>新增编码</span></button>
+              </div>
+            </div>
+            <div class="table-wrap"><table class="data-table" id="hsTable"></table></div>
+            <div id="hsResultInfo" class="hint"></div>
+            <div class="hint">内置编码为海关税则参考数据，申报前请以中国海关最新税则 / 单一窗口归类结果复核；可导入报关行提供的 CSV 保持与海关一致。</div>
+          </div>
+        </section>
+
+        <section id="section-glossary" class="section" data-title="外贸英语库" data-subtitle="常用外贸词汇、句子与表达">
+          <div class="panel">
+            <div class="section-toolbar">
+              <input id="glossarySearch" class="search-input" placeholder="搜索英文 / 中文">
+              <select id="glossaryFilter" class="filter-select"></select>
+            </div>
+            <div id="glossaryList" class="glossary-list"></div>
+          </div>
+        </section>
+
+        <section id="section-docs" class="section" data-title="单证清单" data-subtitle="按运输方式核对所需单证，并生成标准 PDF">
+          <div class="tool-layout">
+            <div class="panel">
+              <div class="panel-head">
+                <h3>单证核对清单</h3>
+                <button class="btn primary" id="exportCheckedPdfBtn"><i data-lucide="file-down"></i><span>预览已勾选 PDF</span></button>
+              </div>
+              <select id="docMode" class="full">
+                <option value="sea">海运</option>
+                <option value="air">空运</option>
+                <option value="express">快递</option>
+              </select>
+              <div class="progress-box">
+                <div class="progress-bar"><span id="docProgress"></span></div>
+                <div id="docProgressText" class="hint"></div>
+              </div>
+              <div id="docChecklist" class="check-list"></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head">
+                <h3>单证信息</h3>
+                <div class="toolbar-actions">
+                  <button class="btn ghost" id="docClearBtn"><i data-lucide="eraser"></i><span>清空</span></button>
+                </div>
+              </div>
+              <label class="doc-order-label">从订单带入<select id="docOrderSelect"><option value="">手动填写</option></select></label>
+              <div id="docFieldHint" class="hint doc-field-hint"></div>
+              <fieldset class="doc-fieldset">
+                <legend>交易信息</legend>
+                <div class="form-grid">
+                  <label class="doc-gentype">单据类型<select id="docGenType"><option value="pi">形式发票 PI</option><option value="ci">商业发票 CI</option><option value="pl">装箱单 PL</option><option value="sa">装船通知 SA</option><option value="co">原产地证 CO</option><option value="bl">海运提单 B/L</option><option value="awb">空运单 AWB</option><option value="bc">受益人证明 BC</option></select></label>
+                  <label data-doc-field="invoiceNo">发票号<input id="docInvoiceNo" placeholder="INV-20260806-001"></label>
+                  <label data-doc-field="poNo">PO 号<input id="docPoNo" placeholder="PO-20260802"></label>
+                  <label data-doc-field="date">日期<input id="docDate" type="date"></label>
+                  <label data-doc-field="seller">卖方<span class="doc-en-tag">英文</span><input id="docSeller" placeholder="Your Company Ltd."></label>
+                  <label data-doc-field="sellerAddress">卖方地址<span class="doc-en-tag">英文</span><input id="docSellerAddress" placeholder="No. 1, Industry Road, Shenzhen, China"></label>
+                  <label data-doc-field="buyer">买方<span class="doc-en-tag">英文</span><input id="docBuyer" placeholder="Buyer Company Ltd."></label>
+                  <label data-doc-field="buyerAddress">买方地址<span class="doc-en-tag">英文</span><input id="docBuyerAddress" placeholder="Street, City, Country"></label>
+                  <label data-doc-field="bank">银行信息<span class="doc-en-tag">英文</span><input id="docBank" placeholder="Bank of China / SWIFT: BKCHCNBJ"></label>
+                  <label data-doc-field="payment">付款方式<span class="doc-en-tag">英文</span><select id="docPayment" class="full"></select></label>
+                  <label data-doc-field="delivery">交期<span class="doc-en-tag">英文</span><input id="docDelivery" placeholder="25 days after deposit"></label>
+                  <label data-doc-field="validity">有效期<span class="doc-en-tag">英文</span><input id="docValidity" placeholder="15 days"></label>
+                  <label data-doc-field="lcNo">L/C 号<span class="doc-en-tag">英文</span><input id="docLcNo" placeholder="LC-2026-1234"></label>
+                  <label data-doc-field="certNo">证书号<span class="doc-en-tag">英文</span><input id="docCertNo" placeholder="CO-2026-0001"></label>
+                  <label data-doc-field="buyerVat">买方税号<span class="doc-en-tag">英文</span><input id="docBuyerVat" placeholder="DE123456789 (VAT / Tax ID)"></label>
+                  <label data-doc-field="freight">运费条款<span class="doc-en-tag">英文</span><input id="docFreight" placeholder="FREIGHT PREPAID / FREIGHT COLLECT"></label>
+                </div>
+              </fieldset>
+              <fieldset class="doc-fieldset">
+                <legend>货物明细</legend>
+                <div class="doc-items-wrap" data-doc-field="docItems">
+                  <div class="table-wrap"><table class="data-table" id="docItemsTable">
+                    <thead><tr><th>产品描述<span class="doc-en-tag">英文</span></th><th>HS 编码</th><th>数量</th><th>单价</th><th>金额</th><th class="actions">操作</th></tr></thead>
+                    <tbody></tbody>
+                  </table></div>
+                  <div class="btn-row doc-items-actions">
+                    <button class="btn ghost" id="addDocItemBtn"><i data-lucide="plus"></i><span>新增一行</span></button>
+                    <span class="doc-total">合计：<strong id="docTotalDisplay">0.00</strong></span>
+                  </div>
+                </div>
+                <div class="form-grid">
+                  <label data-doc-field="cartons">箱数<input id="docCartons" placeholder="10 cartons"></label>
+                  <label data-doc-field="cartonSize">箱规 (L×W×H)<input id="docCartonSize" placeholder="60 × 40 × 35 cm"></label>
+                  <label data-doc-field="currency">币种<select id="docCurrency"><option>USD</option></select></label>
+                  <label data-doc-field="terms">贸易条款<span class="doc-en-tag">英文</span><select id="docTerms" class="full"><option value="">-</option></select></label>
+                  <label data-doc-field="marks">唛头<span class="doc-en-tag">英文</span><input id="docMarks" placeholder="N/M or shipping marks"></label>
+                  <label data-doc-field="weight">毛重 / 净重<input id="docWeight" placeholder="1,500 / 1,380 kg"></label>
+                  <label data-doc-field="volume">体积<input id="docVolume" placeholder="6.5 CBM"></label>
+                </div>
+              </fieldset>
+              <fieldset class="doc-fieldset">
+                <legend>运输信息</legend>
+                <div class="form-grid">
+                  <label data-doc-field="from">起运港<span class="doc-en-tag">英文</span><input id="docFrom" placeholder="Ningbo, China"></label>
+                  <label data-doc-field="to">目的港<span class="doc-en-tag">英文</span><input id="docTo" placeholder="Hamburg, Germany"></label>
+                  <label data-doc-field="vessel">船名 / 航班<span class="doc-en-tag">英文</span><input id="docVessel" placeholder="Vessel / Flight No."></label>
+                  <label data-doc-field="blNo">提单 / 运单号<span class="doc-en-tag">英文</span><input id="docBlNo" placeholder="B/L or AWB No."></label>
+                  <label data-doc-field="containerNo">集装箱 / 铅封号<span class="doc-en-tag">英文</span><input id="docContainerNo" placeholder="CXLU1234567 / SEAL 112233"></label>
+                  <label data-doc-field="carrier">承运人<span class="doc-en-tag">英文</span><input id="docCarrier" placeholder="COSCO / China Southern Cargo"></label>
+                  <label data-doc-field="shipDate">装运日期<input id="docShipDate" type="date"></label>
+                  <label data-doc-field="eta">预计到港<input id="docEta" type="date"></label>
+                </div>
+              </fieldset>
+              <fieldset class="doc-fieldset" data-doc-field="notes">
+                <legend>备注</legend>
+                <textarea id="docNotes" class="doc-notes" placeholder="Special remarks (English recommended)"></textarea>
+              </fieldset>
+              <div class="doc-actions">
+                <button class="btn" id="genDocBtn"><i data-lucide="file-text"></i><span>文本预览</span></button>
+                <button class="btn primary" id="genDocPdfBtn"><i data-lucide="eye"></i><span>预览 PDF</span></button>
+                <button class="btn" id="printDocBtn"><i data-lucide="printer"></i><span>打印</span></button>
+                <button class="btn" id="copyDocBtn"><i data-lucide="copy"></i><span>复制文本</span></button>
+              </div>
+              <textarea id="docOutput" class="doc-output" spellcheck="false"></textarea>
+              <div class="hint">先预览 PDF 内容，确认无误后可在预览窗口下载；标准单证建议使用英文填写。</div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>已生成单证记录</h3><button class="btn ghost" id="docHistoryClearBtn"><i data-lucide="eraser"></i><span>清空记录</span></button></div>
+            <div id="docHistory" class="doc-history"></div>
+          </div>
+        </section>
+
+        <section id="section-settings" class="section" data-title="设置与数据" data-subtitle="公司信息与本地数据管理">
+          <div class="tool-layout">
+            <div class="panel">
+              <div class="panel-head"><h3>公司与业务员信息</h3></div>
+              <div class="form-grid">
+                <label>公司名称<input id="setCompany"></label>
+                <label>业务员姓名<input id="setSales"></label>
+                <label>邮箱<input id="setEmail" type="email"></label>
+                <label>电话 / WhatsApp<input id="setPhone"></label>
+                <label>默认贸易条款<select id="setIncoterm"></select></label>
+                <label>默认付款方式<select id="setPayment" class="full"></select></label>
+                <label>默认港口<input id="setPort"></label>
+                <label>默认币种<select id="setCurrency"><option>USD</option><option>EUR</option><option>CNY</option><option>GBP</option></select></label>
+                <label>报价有效期<input id="setValidity"></label>
+                <label>默认交期<input id="setDelivery"></label>
+                <label>卖方英文地址<input id="setSellerAddress" placeholder="No. 1, Industry Road, Shenzhen, China"></label>
+                <label>发票号前缀<input id="setInvoicePrefix" placeholder="INV"></label>
+                <label>银行名称（英文）<input id="setBankName" placeholder="Bank of China"></label>
+                <label>银行账号<input id="setBankAccount" placeholder="1234 5678 9012 3456"></label>
+                <label>SWIFT / IBAN<input id="setBankSwift" placeholder="BKCHCNBJ"></label>
+                <label>银行地址（英文）<input id="setBankAddress" placeholder="No. 1, Fuxingmen, Beijing, China"></label>
+              </div>
+              <div class="btn-row"><button class="btn primary" id="saveSettingsBtn"><i data-lucide="save"></i><span>保存设置</span></button></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><h3>数据管理</h3></div>
+              <div class="data-actions">
+                <button class="btn" id="exportDataBtn"><i data-lucide="download"></i><span>导出全部数据</span></button>
+                <button class="btn" id="importDataBtn"><i data-lucide="upload"></i><span>导入数据</span></button>
+                <input type="file" id="importDataFile" accept=".json" hidden>
+                <button class="btn danger" id="resetDataBtn"><i data-lucide="trash-2"></i><span>重置演示数据</span></button>
+              </div>
+              <div class="hint">客户、报价、汇率、邮件模板与设置均保存在本机浏览器中。</div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><h3>我的账号</h3></div>
+              <div id="accountInfo" class="account-info"></div>
+              <div class="data-actions">
+                <button class="btn" id="logoutBtn"><i data-lucide="log-out"></i><span>退出登录</span></button>
+              </div>
+              <div class="hint">通过部署服务器访问时需登录；每个业务员的数据相互独立。双击本地打开 index.html 则不登录、数据仅存本机。</div>
+              <div class="hint" id="appVersionInfo">系统版本：--</div>
+            </div>
+            <div class="panel" id="userManagePanel" style="display:none;">
+              <div class="panel-head"><h3>用户管理</h3><button class="btn ghost" id="refreshUsersBtn"><i data-lucide="refresh-cw"></i><span>刷新</span></button></div>
+              <div id="userManageList" class="user-manage-list"></div>
+              <div class="hint">首个注册用户自动为管理员。管理员可重置密码、删除用户、设置/取消管理员（不能删除或降级最后一名管理员、不能降级自己）。</div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div id="authScreen" class="auth-screen">
+    <div class="auth-card">
+      <div class="auth-brand"><strong>外贸业务员工具箱</strong><small>Trade Desk · 局域网多用户版 <span id="appVersion"></span></small></div>
+      <div id="authLoading" class="auth-loading">正在连接服务器…</div>
+      <div id="authLoginForm" class="auth-form" style="display:none">
+        <input id="authUsername" placeholder="用户名" autocomplete="username">
+        <input id="authPassword" type="password" placeholder="密码" autocomplete="current-password">
+        <button class="btn primary auth-btn" id="authLoginBtn"><i data-lucide="log-in"></i><span>登录</span></button>
+        <div class="auth-switch"><span>还没有账号？</span><button class="link-btn" id="authShowRegister">注册新账号</button></div>
+        <div id="authError" class="auth-error"></div>
+      </div>
+      <div id="authRegisterForm" class="auth-form" style="display:none">
+        <input id="regUsername" placeholder="用户名（登录用）" autocomplete="username">
+        <input id="regDisplayName" placeholder="姓名 / 业务员名称">
+        <input id="regPassword" type="password" placeholder="密码（至少 4 位）" autocomplete="new-password">
+        <input id="regKey" type="password" placeholder="注册邀请码（问管理员要）" autocomplete="off">
+        <button class="btn primary auth-btn" id="regBtn"><i data-lucide="user-plus"></i><span>注册</span></button>
+        <div class="auth-switch"><span>已有账号？</span><button class="link-btn" id="authShowLogin">返回登录</button></div>
+        <div id="authError2" class="auth-error"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="modalRoot"></div>
+  <script src="vendor/lucide.min.js"></script>
+  <script src="vendor/jspdf.umd.min.js"></script>
+  <script src="vendor/pdf.min.js"></script>
+  <script src="vendor/html2canvas.min.js"></script>
+  <script src="hs-full.js"></script>
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+{
+  "name": "trade-toolbox-lan",
+  "version": "1.0.0",
+  "private": true,
+  "description": "LAN static server for the foreign trade toolbox",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
