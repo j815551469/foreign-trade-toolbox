@@ -308,11 +308,11 @@ const handler = (req, res) => {
       // adminAccount：登录页显示"试用账号/初始密码"提示（仅提示，密码本身不存储，靠 TRIAL_PASS_HINT 或默认）
       const users = loadUsers();
       const adminName = Object.keys(users).find((n) => users[n].role === "admin") || "";
-      const passHint = String(process.env.TRIAL_PASS_HINT || "admin123");
       json(res, 200, {
         ...st,
         userCount: userCount(),
-        adminAccount: { username: adminName, passHint },
+        // adminAccount：登录页提示试用管理员账号名（密码是注册时自己设置的，不提示）
+        adminAccount: { username: adminName },
         // 全新安装（尚无账号）时把注册邀请码直接给登录页，方便首次使用；注册第一个账号后不再暴露
         registerKey: Object.keys(users).length === 0 ? REGISTER_KEY : undefined,
       });

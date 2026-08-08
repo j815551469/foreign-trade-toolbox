@@ -276,7 +276,6 @@ async function updateAuthLicenseHint() {
     const r = await fetch("api/license", { cache: "no-store" });
     const d = await r.json();
     const admin = (d.adminAccount && d.adminAccount.username) || "";
-    const pass = (d.adminAccount && d.adminAccount.passHint) || "";
     const daysToExpiry = d.expires ? Math.ceil((Date.parse(d.expires) - Date.now()) / (24 * 3600 * 1000)) : Infinity;
     if (d.mode === "licensed") {
       if (isFinite(daysToExpiry) && daysToExpiry <= 3) {
@@ -295,7 +294,7 @@ async function updateAuthLicenseHint() {
         }
         el.innerHTML = `${warn ? `<span style="color:#b45309;font-weight:600"><i data-lucide="alert-triangle"></i> 试用将于 <strong>${Number(d.daysLeft) || 0} 天</strong>后到期！</span>` : `试用剩余 <strong>${Number(d.daysLeft) || 0} 天</strong>`} · 可注册 ${Number(d.seats) || "-"} 个账号<br><span style="color:#64748b">还没有账号？<strong>注册邀请码：${esc(rk || "见服务器控制台")}</strong>（已自动填入注册框）· 第一个注册的账号自动成为管理员。</span>`;
       } else {
-        el.innerHTML = `${warn ? `<span style="color:#b45309;font-weight:600"><i data-lucide="alert-triangle"></i> 试用将于 <strong>${Number(d.daysLeft) || 0} 天</strong>后到期！</span>` : `试用剩余 <strong>${Number(d.daysLeft) || 0} 天</strong>`} · 可注册 ${Number(d.seats) || "-"} 个账号<br><span style="color:#64748b">试用账号 <strong>${esc(admin)}</strong> / 初始密码 <strong>${esc(pass)}</strong>（登录后请尽快修改密码）</span>`;
+        el.innerHTML = `${warn ? `<span style="color:#b45309;font-weight:600"><i data-lucide="alert-triangle"></i> 试用将于 <strong>${Number(d.daysLeft) || 0} 天</strong>后到期！</span>` : `试用剩余 <strong>${Number(d.daysLeft) || 0} 天</strong>`} · 可注册 ${Number(d.seats) || "-"} 个账号<br><span style="color:#64748b">试用账号 <strong>${esc(admin)}</strong>（密码为注册时自己设置）</span>`;
       }
     } else {
       el.innerHTML = `<span style="color:#dc2626;font-weight:600">试用已到期，请激活授权</span>`;
