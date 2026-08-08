@@ -605,17 +605,14 @@
   </div>
 
   <div id="authScreen" class="auth-screen">
+    <div class="auth-license-corner" id="authLicenseCorner">
+      <div class="alc-title"><i data-lucide="key-round"></i>授权</div>
+      <div id="authLicenseHint" class="auth-license-hint"></div>
+      <button class="alc-btn" id="authLicenseOpenBtn"><i data-lucide="badge-check"></i><span>激活 / 管理授权</span></button>
+    </div>
     <div class="auth-card">
       <div class="auth-brand"><strong>外贸业务员工具箱</strong><small>Trade Desk · 局域网多用户版 <span id="appVersion"></span></small></div>
       <div id="authLoading" class="auth-loading">正在连接服务器…</div>
-      <div id="authLicenseBox" class="auth-license-box">
-        <div id="authLicenseHint" class="auth-license-hint"></div>
-        <div class="auth-license-activate">
-          <input id="authLicenseKey" placeholder="粘贴授权码（激活后显示公司名与到期日）" autocomplete="off">
-          <button class="btn primary auth-btn" id="authLicenseBtn"><i data-lucide="key-round"></i><span>激活授权</span></button>
-        </div>
-        <div id="authLicenseResult" class="auth-license-result"></div>
-      </div>
       <div id="authLoginForm" class="auth-form" style="display:none">
         <input id="authUsername" placeholder="用户名" autocomplete="username">
         <input id="authPassword" type="password" placeholder="密码" autocomplete="current-password">

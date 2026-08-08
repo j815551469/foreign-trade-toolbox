@@ -268,12 +268,10 @@ function showAuthLogin() {
   updateAuthLicenseHint();
 }
 
-// 登录页：试用状态 + 试用账号提示 + 已激活公司名/到期日
+// 登录页左上角授权卡片：试用状态 + 试用账号提示 + 已激活公司名/到期日
 async function updateAuthLicenseHint() {
   const el = $("#authLicenseHint");
   if (!el) return;
-  const result = $("#authLicenseResult");
-  if (result) result.innerHTML = "";
   try {
     const r = await fetch("api/license", { cache: "no-store" });
     const d = await r.json();
@@ -282,18 +280,43 @@ async function updateAuthLicenseHint() {
     const daysToExpiry = d.expires ? Math.ceil((Date.parse(d.expires) - Date.now()) / (24 * 3600 * 1000)) : Infinity;
     if (d.mode === "licensed") {
       if (isFinite(daysToExpiry) && daysToExpiry <= 3) {
-        el.innerHTML = `<span style="color:#b45309;font-weight:600"><i data-lucide="alert-triangle"></i> 授权将于 <strong>${daysToExpiry} 天</strong>后到期（${esc(String(d.expires).slice(0, 10))}），请及时联系授权方续费！</span>`;
+        el.innerHTML = `<span style="color:#b45309;font-weight:600"><i data-lucide="alert-triangle"></i> 授权将于 <strong>${daysToExpiry} 天</strong>后到期（${esc(String(d.expires).slice(0, 10))}），请及时续费！</span>`;
       } else {
-        el.innerHTML = `<span style="color:#16a34a"><i data-lucide="badge-check"></i> 已激活授权 · <strong>${esc(d.company || "")}</strong> · ${Number(d.seats) || "-"} 席位 · 到期 ${esc(String(d.expires || "").slice(0, 10) || "永久")}</span>`;
+        el.innerHTML = `<span style="color:#16a34a"><i data-lucide="badge-check"></i> 已激活授权 · <strong>${esc(d.company || "")}</strong> · ${Number(d.seats) || "-"} 席位<br>到期 ${esc(String(d.expires || "").slice(0, 10) || "永久")}</span>`;
       }
     } else if (d.mode === "trial") {
       const warn = Number(d.daysLeft) <= 3;
-      el.innerHTML = `${warn ? `<span style="color:#b45309;font-weight:600"><i data-lucide="alert-triangle"></i> 试用将于 <strong>${Number(d.daysLeft) || 0} 天</strong>后到期，请尽快激活授权！</span>` : `试用剩余 <strong>${Number(d.daysLeft) || 0} 天</strong>`} · 可注册 ${Number(d.seats) || "-"} 个账号${admin ? `<br>试用账号：<strong>${esc(admin)}</strong> / 初始密码 <strong>${esc(pass)}</strong>（登录后请尽快修改密码）` : ""}`;
+      el.innerHTML = `${warn ? `<span style="color:#b45309;font-weight:600"><i data-lucide="alert-triangle"></i> 试用将于 <strong>${Number(d.daysLeft) || 0} 天</strong>后到期！</span>` : `试用剩余 <strong>${Number(d.daysLeft) || 0} 天</strong>`} · 可注册 ${Number(d.seats) || "-"} 个账号${admin ? `<br><span style="color:#64748b">试用账号 <strong>${esc(admin)}</strong> / 初始密码 <strong>${esc(pass)}</strong></span>` : ""}`;
     } else {
-      el.innerHTML = `<span style="color:#dc2626">试用已到期，请粘贴授权码激活</span>`;
+      el.innerHTML = `<span style="color:#dc2626;font-weight:600">试用已到期，请激活授权</span>`;
     }
+    const btn = $("#authLicenseOpenBtn");
+    if (btn && btn.querySelector("span")) btn.querySelector("span").textContent = d.mode === "licensed" ? "管理授权" : "激活授权";
     refreshIcons();
   } catch (e) { el.textContent = ""; }
+}
+
+// 授权弹窗（登录页左上角"激活/管理授权"按钮打开）
+function openLicenseModal() {
+  openModal(`
+    <div class="modal">
+      <div class="modal-head"><h3>授权管理</h3><button class="icon-btn" id="modalCloseBtn"><i data-lucide="x"></i></button></div>
+      <div class="form-grid">
+        <label style="grid-column:1/-1">授权码<input id="authLicenseKey" placeholder="粘贴授权码（激活后显示公司名与到期日）" autocomplete="off"></label>
+        <div id="licModalHint" style="grid-column:1/-1" class="hint"></div>
+        <div id="authLicenseResult" style="grid-column:1/-1"></div>
+      </div>
+      <div class="modal-actions"><button class="btn" id="modalCancelBtn">取消</button><button class="btn primary" id="authLicenseBtn"><i data-lucide="key-round"></i><span>激活授权</span></button></div>
+    </div>`);
+  fetch("api/license", { cache: "no-store" }).then((rr) => rr.json()).then((d) => {
+    const h = $("#licModalHint");
+    if (!h) return;
+    if (d.mode === "licensed") h.textContent = `当前：已激活授权 · ${d.company || ""} · ${Number(d.seats) || "-"} 席位 · 到期 ${String(d.expires || "").slice(0, 10) || "永久"}。粘贴新授权码可更换。`;
+    else if (d.mode === "trial") h.textContent = `当前：试用剩余 ${Number(d.daysLeft) || 0} 天（${Number(d.seats) || "-"} 席位）。授权码由授权方提供。`;
+    else h.textContent = "试用已到期，请粘贴授权码激活。";
+  }).catch(() => { /* ignore */ });
+  $("#authLicenseBtn")?.addEventListener("click", activateLicense);
+  $("#authLicenseKey")?.focus();
 }
 
 async function doLogin() {
@@ -3233,21 +3256,15 @@ async function renderLicenseStatus() {
     statusEl.innerHTML = `<span class="cell-sub">未通过服务器访问（本机模式，无授权限制）</span>`;
   }
 }
-async function activateLicense(ev) {
-  // 按点击的按钮就近取输入框（登录页 #authLicenseKey / 设置页 #licenseKeyInput，二者都在 DOM 里）
-  let keyEl = null;
-  if (ev && ev.currentTarget) {
-    keyEl = ev.currentTarget.closest("#licenseActivateRow")?.querySelector("#licenseKeyInput")
-      || ev.currentTarget.closest(".auth-license-activate")?.querySelector("#authLicenseKey");
-  }
-  keyEl = keyEl || $("#licenseKeyInput") || $("#authLicenseKey");
-  const key = ((keyEl && keyEl.value) || "").trim();
+async function activateLicense() {
+  // 授权码输入在弹窗 #authLicenseKey，或设置页 #licenseKeyInput
+  const key = (($("#authLicenseKey") && $("#authLicenseKey").value) || ($("#licenseKeyInput") && $("#licenseKeyInput").value) || "").trim();
   if (!key) { toast("请先粘贴授权码"); return; }
   const result = $("#authLicenseResult");
   try {
     const r = await fetch("api/license", {
       method: "POST",
-      headers: { "Content-Type": "application/json" }, // 授权码本身即凭据：登录页可免登录激活
+      headers: { "Content-Type": "application/json" }, // 授权码本身即凭据：免登录激活
       body: JSON.stringify({ key })
     });
     const d = await r.json();
@@ -3262,6 +3279,7 @@ async function activateLicense(ev) {
     await updateAuthLicenseHint();
     if (typeof renderLicenseStatus === "function") renderLicenseStatus();
     if (typeof renderUserManagement === "function") renderUserManagement();
+    setTimeout(() => closeModal(), 800); // 成功后自动关闭弹窗
   } catch (e) { toast("无法连接服务器"); }
 }
 
@@ -4643,9 +4661,9 @@ function init() {
     const delBtn = e.target.closest(".js-user-del");
     if (delBtn) { deleteUser(delBtn.dataset.user); return; }
   });
-  // 授权/试用（设置页 + 登录页激活按钮）
+  // 授权/试用（设置页直接激活；登录页左上角按钮打开授权弹窗）
   $("#activateLicenseBtn")?.addEventListener("click", activateLicense);
-  $("#authLicenseBtn")?.addEventListener("click", activateLicense);
+  $("#authLicenseOpenBtn")?.addEventListener("click", openLicenseModal);
 
   // 登录/注册
   $("#authLoginBtn").addEventListener("click", doLogin);
