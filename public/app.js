@@ -182,6 +182,7 @@ let serverSaveTimer = null;
 let sessionEpoch = 0; // 会话代际：登出/切换账号时 +1，使排队的过期保存定时器作废（防止 A 的数据被写进 B 的账号）
 let saveFailNotified = false;
 let storageWarned = false;
+let lastLicenseMachine = ""; // 当前机器码（设置页"复制公司+机器码"用）
 
 function scheduleServerSave() {
   clearTimeout(serverSaveTimer);
@@ -3226,6 +3227,10 @@ async function renderLicenseStatus() {
     if (!r.ok) { statusEl.innerHTML = `<span class="cell-sub">无法获取授权状态：${esc(d.error || "未知错误")}</span>`; return; }
     const mcEl = $("#licenseMachine");
     if (mcEl) mcEl.innerHTML = `机器码：<code>${esc(d.machine || "-")}</code>`;
+    lastLicenseMachine = d.machine || "";
+    // 预填公司名称（来自设置里填的公司名）
+    const compInput = $("#licenseCompanyInput");
+    if (compInput && !compInput.value && state.settings && state.settings.company) compInput.value = state.settings.company;
     // 注册邀请码：管理员可见并可一键复制
     const rkEl = $("#licenseRegKey");
     const rkCodeEl = $("#licenseRegKeyCode");
@@ -3258,6 +3263,15 @@ async function renderLicenseStatus() {
   } catch (e) {
     statusEl.innerHTML = `<span class="cell-sub">未通过服务器访问（本机模式，无授权限制）</span>`;
   }
+}
+
+// 复制「公司名称 + 机器码」：客户发给授权方用于签发对应授权码
+function copyCompanyMachine() {
+  const company = (($("#licenseCompanyInput") && $("#licenseCompanyInput").value.trim()) || (state.settings && state.settings.company) || "").trim();
+  if (!company) { toast("请先填写公司名称"); ($("#licenseCompanyInput") || $("#setCompany"))?.focus(); return; }
+  if (!lastLicenseMachine) { toast("尚未获取到机器码"); return; }
+  copyText(`${company} ${lastLicenseMachine}`);
+  toast("公司名称+机器码已复制，发给授权方即可");
 }
 async function activateLicense() {
   // 授权管理在设置页（仅管理员），授权码输入为设置页 #licenseKeyInput
@@ -4697,6 +4711,7 @@ function init() {
   });
   // 授权/试用（设置页激活，仅管理员可见）
   $("#activateLicenseBtn")?.addEventListener("click", activateLicense);
+  $("#copyCompanyMachineBtn")?.addEventListener("click", copyCompanyMachine);
 
   // 登录/注册
   $("#authLoginBtn").addEventListener("click", doLogin);
