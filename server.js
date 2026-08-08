@@ -417,13 +417,14 @@ const handler = (req, res) => {
       const adminName = Object.keys(users).find((n) => users[n].role === "admin") || "";
       const me = authUser(req);
       const isAdminReq = !!(me && me.role === "admin");
+      const hasAdmin = Object.keys(users).some((n) => users[n].role === "admin");
       json(res, 200, {
         ...st,
         userCount: userCount(),
         // adminAccount：登录页提示试用管理员账号名（密码是注册时自己设置的，不提示）
         adminAccount: { username: adminName },
-        // 注册邀请码：全新安装（尚无账号）或管理员请求时返回；设置页直接显示并可复制
-        registerKey: (Object.keys(users).length === 0 || isAdminReq) ? REGISTER_KEY : undefined,
+        // 注册邀请码：仅在首次启动（尚无管理员）时给登录页；管理员在设置页可查看复制
+        registerKey: (!hasAdmin || isAdminReq) ? REGISTER_KEY : undefined,
       });
       return;
     }

@@ -283,7 +283,8 @@ async function updateAuthLicenseHint() {
       const rk = d.registerKey || "";
       const regKeyEl = $("#regKey");
       if (regKeyEl && !regKeyEl.value) regKeyEl.value = rk;
-      el.innerHTML = `还没有账号？<strong>注册邀请码：${esc(rk)}</strong>（已自动填入注册框）· 第一个注册的账号自动成为管理员。`;
+      // 仅在首次启动（尚无管理员）时显示；不提示"自动填入"
+      el.innerHTML = `还没有账号？<strong>注册邀请码：${esc(rk)}</strong> · 第一个注册的账号自动成为管理员。`;
       refreshIcons();
       return;
     }
